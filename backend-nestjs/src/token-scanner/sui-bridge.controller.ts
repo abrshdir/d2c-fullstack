@@ -15,14 +15,14 @@ import {
 } from './sui-bridge.service';
 import { BridgeRequestDto } from './dto/bridge-request.dto';
 import { SwapTransactionService } from './swap-transaction.service';
-import { SuiRepaymentService } from './sui-repayment.service';
+// SuiRepaymentService import removed
 
 @Controller('token-scanner/bridge')
 export class SuiBridgeController {
   constructor(
     private readonly suiBridgeService: SuiBridgeService,
     private readonly swapTransactionService: SwapTransactionService,
-    private readonly suiRepaymentService: SuiRepaymentService,
+    // SuiRepaymentService injection removed
   ) {}
 
   @Post('quote')
@@ -97,15 +97,20 @@ export class SuiBridgeController {
     );
 
     // If the bridge is completed and we have wallet address and amount info,
-    // process the repayment to deduct gas loan debt
+    // process the repayment to deduct gas loan debt - This logic is now removed.
+    // Repayment and loan tracking are handled by Dust2CashEscrowService and user interaction with the contract.
     if (
       bridgeStatus === BridgeStatus.COMPLETED &&
       webhookData.walletAddress &&
       webhookData.bridgedAmount
     ) {
-      await this.suiRepaymentService.processRepayment(
-        webhookData.walletAddress,
-        webhookData.bridgedAmount,
+      // await this.suiRepaymentService.processRepayment(
+      //   webhookData.walletAddress,
+      //   webhookData.bridgedAmount,
+      // );
+      this.suiBridgeService.logger.log(
+        `Bridge completed for user ${webhookData.walletAddress}, amount ${webhookData.bridgedAmount}. ` +
+        `Repayment logic previously here is now handled by Dust2CashEscrow contract interactions.`
       );
     }
 

@@ -11,6 +11,7 @@ import { SuiStakingService } from './sui-staking.service';
 import { RewardManagementService } from './reward-management.service';
 import { SuiBridgeService } from './sui-bridge.service';
 import { RubicSwapController } from './rubic-swap.controller';
+import { Dust2CashEscrowService } from './services/dust2cash-escrow.service';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { RubicSwapController } from './rubic-swap.controller';
     SuiStakingService,
     RewardManagementService,
     SuiBridgeService,
+    Dust2CashEscrowService,
   ],
   exports: [
     TokenScannerService,
@@ -40,6 +42,7 @@ import { RubicSwapController } from './rubic-swap.controller';
     SuiStakingService,
     RewardManagementService,
     SuiBridgeService,
+    Dust2CashEscrowService,
   ],
 })
 export class TokenScannerModule {}

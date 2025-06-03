@@ -127,3 +127,14 @@ export interface ApiErrorResponse {
   message?: string;
   details?: object;
 }*/
+
+// Matches backend SuiStakingResult (with discountedLoanAmount removed)
+export interface SuiStakingResult {
+  success: boolean;
+  bridgeTransactionHash?: string;
+  suiStakingTransactionHash?: string;
+  stakedAmount?: string;
+  validatorAddress?: string;
+  estimatedRewards?: string;
+  error?: string;
+}

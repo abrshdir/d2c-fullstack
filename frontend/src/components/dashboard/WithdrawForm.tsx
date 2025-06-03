@@ -1,77 +1,112 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+// Input and Label might not be needed if we just display info and a button
+// import { Input } from "@/components/ui/input";
+// import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
-import { initiateWithdrawal } from "@/lib/api/api";
-import { WithdrawRequest } from "@/lib/api/types";
+// initiateWithdrawal and WithdrawRequest are from the old system, remove.
+// import { initiateWithdrawal } from "@/lib/api/api";
+// import { WithdrawRequest } from "@/lib/api/types";
+import { AccountStatusResponse } from "@/lib/api/tokenScanner"; // For prop type
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { DUST2CASH_ESCROW_CONTRACT_ADDRESS, DUST2CASH_ESCROW_ABI } from "@/lib/contracts/Dust2CashEscrow"; // Placeholder for now
+import { parseUnits, formatUnits } from "ethers";
 
-export function WithdrawForm() {
-  const [loanId, setLoanId] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+
+interface WithdrawFormProps {
+  accountStatus: AccountStatusResponse | null;
+  onWithdrawalInitiated?: () => void; // Callback to refresh data
+}
+
+export function WithdrawForm({ accountStatus, onWithdrawalInitiated }: WithdrawFormProps) {
+  const { address, isConnected } = useAccount();
   const { toast } = useToast();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loanId) {
-      toast({
-        title: "Error",
-        description: "Please enter a loan ID",
-        variant: "destructive",
-      });
+  const { data: hash, error: writeError, isPending: isWritePending, writeContract } = useWriteContract();
+  const { isLoading: isTxLoading, isSuccess: isTxSuccess, error: txError } = useWaitForTransactionReceipt({ hash });
+
+  const canWithdraw = accountStatus && parseFloat(accountStatus.outstandingDebt) === 0 && parseFloat(accountStatus.escrowedAmount) > 0;
+
+  const handleWithdraw = async () => {
+    if (!isConnected || !address) {
+      toast({ title: "Error", description: "Please connect your wallet.", variant: "destructive" });
+      return;
+    }
+    if (!canWithdraw || !accountStatus) {
+      toast({ title: "Error", description: "Withdrawal conditions not met.", variant: "destructive" });
       return;
     }
 
-    setIsLoading(true);
-    try {
-      const request: WithdrawRequest = {
-        loanId,
-      };
+    console.log("Initiating withdrawal from Dust2CashEscrow contract...");
+    writeContract({
+      address: DUST2CASH_ESCROW_CONTRACT_ADDRESS as `0x${string}`,
+      abi: DUST2CASH_ESCROW_ABI,
+      functionName: 'withdrawFunds',
+      args: [], // withdrawFunds takes no arguments
+    });
+  };
 
-      const response = await initiateWithdrawal(request);
+  useEffect(() => {
+    if (isTxSuccess) {
       toast({
-        title: "Success",
-        description: `Withdrawal initiated. Amount: ${response.amount}, Rewards: ${response.rewards}`,
+        title: "Withdrawal Successful",
+        description: `Funds withdrawn successfully. Transaction: ${hash}`,
       });
-    } catch (error) {
+      if (onWithdrawalInitiated) {
+        onWithdrawalInitiated(); // Callback to parent to refresh data
+      }
+    }
+    if (writeError) {
       toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to initiate withdrawal",
+        title: "Withdrawal Error",
+        description: `Failed to send transaction: ${writeError.shortMessage || writeError.message}`,
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
     }
-  };
+    if (txError) {
+      toast({
+        title: "Transaction Error",
+        description: `Transaction failed: ${txError.shortMessage || txError.message}`,
+        variant: "destructive",
+      });
+    }
+  }, [isTxSuccess, writeError, txError, hash, toast, onWithdrawalInitiated]);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Withdraw Funds</CardTitle>
+        <CardTitle>Withdraw Your USDC</CardTitle>
         <CardDescription>
-          Enter your loan ID to withdraw funds and rewards
+          Withdraw your USDC from the Dust2Cash Escrow contract.
+          Your outstanding gas loan debt must be zero.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="loanId">Loan ID</Label>
-            <Input
-              id="loanId"
-              placeholder="Enter loan ID"
-              value={loanId}
-              onChange={(e) => setLoanId(e.target.value)}
-              required
-            />
-          </div>
-          <Button type="submit" disabled={isLoading}>
-            {isLoading ? "Processing..." : "Withdraw"}
-          </Button>
-        </form>
+      <CardContent className="space-y-4">
+        {isConnected && accountStatus ? (
+          <>
+            <p>Escrowed Amount: <strong>{accountStatus.escrowedAmount} USDC</strong></p>
+            <p>Outstanding Debt: <strong>{accountStatus.outstandingDebt} USDC</strong></p>
+            {parseFloat(accountStatus.outstandingDebt) > 0 && (
+              <p className="text-red-500">You must repay your outstanding debt before withdrawing.</p>
+            )}
+            <Button
+              onClick={handleWithdraw}
+              disabled={!canWithdraw || isWritePending || isTxLoading}
+              className="w-full"
+            >
+              {isWritePending && "Check Wallet..."}
+              {isTxLoading && "Processing Transaction..."}
+              {!isWritePending && !isTxLoading && "Withdraw Escrowed USDC"}
+            </Button>
+          </>
+        ) : (
+          <p>{isConnected ? "Loading account status..." : "Please connect your wallet to see withdrawal options."}</p>
+        )}
+        {hash && <p className="text-sm text-muted-foreground">Tx hash: {hash}</p>}
       </CardContent>
     </Card>
   );
-} 
+}

@@ -2,8 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ethers } from 'ethers';
 import { TokenWithValue } from './token-scanner.service';
-import { RubicSwapService, SwapResult } from './rubic-swap.service';
-import { CollateralLockService } from './collateral-lock.service';
+import { RubicSwapService } from './rubic-swap.service'; // Removed SwapResult as it's not directly used here anymore for usdcObtained
+import { Dust2CashEscrowService } from './services/dust2cash-escrow.service'; // Import new escrow service
 
 export interface GasLoanRequest {
   userAddress: string;
@@ -35,10 +35,10 @@ export class GasLoanService {
   constructor(
     private readonly configService: ConfigService,
     private readonly rubicSwapService: RubicSwapService,
-    private readonly collateralLockService: CollateralLockService,
+    private readonly dust2CashEscrowService: Dust2CashEscrowService, // Inject new escrow service
   ) {
     this.relayerPrivateKey = this.configService.get<string>(
-      'RELAYER_PRIVATE_KEY',
+      'RELAYER_PRIVATE_KEY', // This should be the Owner key for Dust2CashEscrow
       '',
     );
 
@@ -74,7 +74,11 @@ export class GasLoanService {
    */
   async processGasLoan(request: GasLoanRequest): Promise<GasLoanResult> {
     try {
-      this.logger.log(`Processing gas loan for user: ${request.userAddress}`);
+      this.logger.log(
+        `Processing gas loan for user: ${request.userAddress}, ` +
+        `Token: ${request.token.symbol}, Address: ${request.token.tokenAddress}, ChainID: ${request.token.chainId}, ` +
+        `Input USD Value: $${request.token.usdValue.toFixed(2)}`
+      );
 
       // Validate token value is within acceptable range ($5-$25)
       if (request.token.usdValue < 5 || request.token.usdValue > 25) {
@@ -127,18 +131,48 @@ export class GasLoanService {
         request.token.chainId,
       );
 
-      // Step 4: Lock collateral in smart contract
-      const lockResult = await this.collateralLockService.lockCollateralWithWallet(
-        request.userAddress,
-        swapResult.usdcObtained,
-        gasCostUsd,
-        relayerWallet,
-      );
+      // Step 4: Deposit swapped USDC into Dust2CashEscrow and record gas debt
+      // The `depositForUser` function in Dust2CashEscrow.sol expects USDC amount and gasDebt amount
+      // The actual USDC amount from the swap is `swapResult.usdcObtained`
+      // The gas debt is `gasCostUsd`
+      // Ensure amounts are in correct units (e.g., wei or smallest unit for USDC)
 
-      if (!lockResult.success) {
+      // Important: The relayerWallet (owner of Dust2CashEscrow) must have the swapped USDC to deposit.
+      // This implies RubicSwapService should send the swapped USDC to the relayerWallet's address,
+      // not the user's address directly after the swap.
+      // For now, we assume swapResult.usdcObtained is the amount received by the relayer.
+      // And relayerWallet is the signer for depositForUser.
+
+      // Also, ensure the Dust2CashEscrow contract is approved to spend relayer's USDC.
+      // This approval should be done once by the relayer (owner).
+      // This service does not handle that approval; it's a setup step.
+
+      if (!swapResult.usdcObtained) {
+        this.logger.error('USDC obtained from swap is undefined or zero.');
         return {
           success: false,
-          error: `Collateral lock failed: ${lockResult.error}`,
+          error: 'Swap did not return the amount of USDC obtained.',
+        };
+      }
+
+      try {
+        const depositTx = await this.dust2CashEscrowService.depositForUser(
+          request.userAddress, // The user for whom the deposit is made
+          swapResult.usdcObtained, // Amount of USDC from the swap
+          gasCostUsd, // Gas cost recorded as debt
+        );
+        await depositTx.wait(); // Wait for the transaction to be mined
+        this.logger.log(
+          `Collateral deposited to Dust2CashEscrow for user: ${request.userAddress}, tx: ${depositTx.hash}`,
+        );
+      } catch (depositError) {
+        this.logger.error(
+          `Failed to deposit collateral to Dust2CashEscrow: ${depositError.message}`,
+          depositError.stack,
+        );
+        return {
+          success: false,
+          error: `Collateral deposit failed: ${depositError.message}`,
         };
       }
 
@@ -149,9 +183,9 @@ export class GasLoanService {
       return {
         success: true,
         transactionHash: swapResult.transactionHash,
-        usdcObtained: swapResult.usdcObtained,
-        gasCostUsd: gasCostUsd,
-        loanAmount: gasCostUsd,
+        usdcObtained: swapResult.usdcObtained, // Still useful to return
+        gasCostUsd: gasCostUsd, // Gas cost of the swap
+        loanAmount: gasCostUsd, // The amount of the loan is the gas cost
       };
     } catch (error) {
       this.logger.error(
@@ -301,19 +335,37 @@ export class GasLoanService {
   ): Promise<{
     collateral: string;
     loanOwed: string;
-    hasActiveLoan: boolean;
+    escrowedAmount: string;
+    outstandingDebt: string;
+    reputationScore: number;
+    isBlacklisted: boolean;
+    // Add hasActiveLoan for compatibility if needed, or adjust frontend
   }> {
     try {
-      return await this.collateralLockService.getUserStatus(
-        userAddress,
-        chainId,
-      );
-    } catch (error) {
-      this.logger.error(`Failed to get user loan status: ${error.message}`);
+      const accountStatus = await this.dust2CashEscrowService.getUserAccountStatus(userAddress);
+      // Adapt the response to match the old structure or update the calling code.
+      // For now, returning the new structure.
+      // To match old structure:
+      // return {
+      //   collateral: accountStatus.escrowedAmount,
+      //   loanOwed: accountStatus.outstandingDebt,
+      //   hasActiveLoan: parseFloat(accountStatus.outstandingDebt) > 0,
+      // };
       return {
-        collateral: '0',
-        loanOwed: '0',
-        hasActiveLoan: false,
+        ...accountStatus,
+        // chainId is not part of Dust2CashEscrowService.getUserAccountStatus,
+        // if it's critical, it needs to be passed through or handled differently.
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get user loan status from Dust2CashEscrowService: ${error.message}`, error.stack);
+      // Return a default/error structure that matches what the frontend expects
+      // or rethrow and handle in controller
+      return {
+        escrowedAmount: '0',
+        outstandingDebt: '0',
+        reputationScore: 0,
+        isBlacklisted: false,
+        // hasActiveLoan: false, // if trying to match old structure
       };
     }
   }
