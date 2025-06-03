@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+
+# Project specific
+smart-contracts/node_modules/
+smart-contracts/artifacts/
+smart-contracts/cache/
+smart-contracts/.env
+
+frontend-new/node_modules/
+frontend-new/dist/
+
+./stranded-value-scanner/node_modules/
+./stranded-value-scanner/dist/
+./stranded-value-scanner/.env
+
+api-docs/node_modules/
+api-docs/dist/
+api-docs/.env
+
+# MongoDB
+data/db/
+mongodb.log
+
+# Cursor specific
+.cursor/
+.idx/
+.windsurf/
+
+# TypeScript
+*.tsbuildinfo
+*.env

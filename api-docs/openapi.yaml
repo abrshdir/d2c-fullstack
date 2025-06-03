@@ -1,0 +1,246 @@
+openapi: 3.0.0
+info:
+  title: Cross-Chain SUI Staking API
+  version: 1.0.0
+  description: API for managing cross-chain staking operations between Ethereum and Sui
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+    GasLoanRequest:
+      type: object
+      required:
+        - amount
+        - tokenAddress
+        - permit
+      properties:
+        amount:
+          type: string
+          description: Amount of tokens to stake
+        tokenAddress:
+          type: string
+          description: Address of the token to stake
+        permit:
+          type: object
+          description: ERC-2612 permit data
+          properties:
+            owner:
+              type: string
+            spender:
+              type: string
+            value:
+              type: string
+            deadline:
+              type: string
+            v:
+              type: string
+            r:
+              type: string
+            s:
+              type: string
+
+    GasLoanResponse:
+      type: object
+      properties:
+        loanId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+        transactionHash:
+          type: string
+        estimatedGasCost:
+          type: string
+
+    StakingStatus:
+      type: object
+      properties:
+        loanId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, STAKED, REWARDING, COMPLETED]
+        stakedAmount:
+          type: string
+        rewardsAccrued:
+          type: string
+        lastUpdateTimestamp:
+          type: string
+
+    WithdrawRequest:
+      type: object
+      required:
+        - loanId
+      properties:
+        loanId:
+          type: string
+          description: ID of the loan to withdraw from
+
+    WithdrawResponse:
+      type: object
+      properties:
+        transactionHash:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+        amount:
+          type: string
+        rewards:
+          type: string
+
+    TransactionHistory:
+      type: object
+      properties:
+        transactions:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+                enum: [DEPOSIT, SWAP, BRIDGE, STAKE, WITHDRAW]
+              status:
+                type: string
+                enum: [PENDING, COMPLETED, FAILED]
+              amount:
+                type: string
+              timestamp:
+                type: string
+              transactionHash:
+                type: string
+
+paths:
+  /gas-loan/process-swap:
+    post:
+      summary: Process a gas loan swap
+      description: Initiates a gas loan swap operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GasLoanRequest'
+      responses:
+        '200':
+          description: Swap processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GasLoanResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /staking/status/{loanId}:
+    get:
+      summary: Get staking status
+      description: Retrieves the current status of a staking position
+      parameters:
+        - name: loanId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Staking status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StakingStatus'
+        '404':
+          description: Loan not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /staking/withdraw:
+    post:
+      summary: Withdraw from staking
+      description: Initiates a withdrawal from a staking position
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawRequest'
+      responses:
+        '200':
+          description: Withdrawal initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /transactions/history:
+    get:
+      summary: Get transaction history
+      description: Retrieves the transaction history for the authenticated user
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Transaction history retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionHistory'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error' 
