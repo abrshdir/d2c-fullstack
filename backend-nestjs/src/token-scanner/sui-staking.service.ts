@@ -10,12 +10,8 @@ import {
 } from './sui-bridge.service';
 import { CollateralLockService } from './collateral-lock.service';
 import { TokenWithValue } from './token-scanner.service';
-
-export interface SuiStakingRequest {
-  userAddress: string;
-  discountRate: number; // 0-100%
-  chainId: string;
-}
+import { SuiStakingRequest } from '../types/sui-staking.types'; // Import updated DTO
+import { Dust2CashEscrowService } from './services/dust2cash-escrow.service'; // Import new Escrow Service
 
 export interface SuiStakingResult {
   success: boolean;
@@ -53,7 +49,8 @@ export class SuiStakingService {
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,
     private readonly suiBridgeService: SuiBridgeService,
-    private readonly collateralLockService: CollateralLockService,
+    private readonly collateralLockService: CollateralLockService, // May still be used for finalizeRewards or SUI specific contract interactions
+    private readonly dust2CashEscrowService: Dust2CashEscrowService, // Inject Escrow Service
   ) {
     this.suiRpcUrl = this.configService.get<string>(
       'SUI_RPC_URL',
@@ -77,40 +74,49 @@ export class SuiStakingService {
    * 5. Apply discount to loan amount
    */
   async initiateSuiStaking(
-    request: SuiStakingRequest,
+    request: SuiStakingRequest, // Now expects usdcAmountToStake
   ): Promise<SuiStakingResult> {
     try {
       this.logger.log(
-        `Initiating SUI staking for user: ${request.userAddress}`,
+        `Initiating SUI staking for user: ${request.userAddress} with amount: ${request.usdcAmountToStake}`,
       );
 
-      // Validate discount rate
-      if (request.discountRate < 0 || request.discountRate > 100) {
+      // Validate usdcAmountToStake
+      const amountToStake = parseFloat(request.usdcAmountToStake);
+      if (isNaN(amountToStake) || amountToStake <= 0) {
         return {
           success: false,
-          error: 'Discount rate must be between 0 and 100%',
+          error: 'Invalid USDC amount to stake.',
         };
       }
 
-      // Get user's collateral status
-      const userStatus = await this.collateralLockService.getUserStatus(
-        request.userAddress,
-        request.chainId,
-      );
+      // Check user's loan status from Dust2CashEscrowService
+      const accountStatus = await this.dust2CashEscrowService.getUserAccountStatus(request.userAddress);
 
-      if (
-        !userStatus.hasActiveLoan ||
-        parseFloat(userStatus.collateral) === 0
-      ) {
+      if (parseFloat(accountStatus.outstandingDebt) > 0) {
+        this.logger.error(
+          `User ${request.userAddress} has an outstanding debt of ${accountStatus.outstandingDebt} USDC. ` +
+          `Loan must be repaid before initiating SUI staking.`
+        );
         return {
           success: false,
-          error: 'User has no active collateral to stake',
+          error: `Outstanding debt of ${accountStatus.outstandingDebt} USDC must be repaid before staking. ` +
+                 `User needs to call repayGasLoan on Dust2CashEscrow contract.`,
         };
       }
+
+      this.logger.log(
+        `User ${request.userAddress} has no outstanding EVM debt. Proceeding with SUI staking. ` +
+        `User affirms they have ${request.usdcAmountToStake} USDC in their EVM wallet to stake.`
+      );
+
+      // The user is responsible for having usdcAmountToStake in their EVM wallet.
+      // This amount should have been withdrawn from Dust2CashEscrow by the user prior to this call.
 
       // Step 1: Bridge USDC to SUI network
+      // The amount to bridge is now request.usdcAmountToStake
       const bridgeResult = await this.bridgeUsdcToSui(
-        userStatus.collateral,
+        request.usdcAmountToStake, // Use the amount from the request
         request.chainId,
         request.userAddress,
       );
@@ -125,7 +131,7 @@ export class SuiStakingService {
       // Step 2: Wait for bridge completion and get SUI USDC
       const suiUsdcAmount = await this.waitForBridgeCompletion(
         bridgeResult.transactionHash!,
-        request.userAddress,
+        request.userAddress, // SUI address should be same as EVM for simplicity here, or derived
       );
 
       if (!suiUsdcAmount) {
@@ -148,7 +154,7 @@ export class SuiStakingService {
       // Step 4: Stake SUI with validator
       const stakingResult = await this.stakeSuiWithValidator(
         suiAmount,
-        request.userAddress,
+        request.userAddress, // SUI address
       );
 
       if (!stakingResult.success) {
@@ -158,18 +164,10 @@ export class SuiStakingService {
         };
       }
 
-      // Step 5: Apply discount to loan amount in smart contract
-      const discountResult = await this.applyLoanDiscount(
-        request.userAddress,
-        request.discountRate,
-        request.chainId,
-      );
-
-      if (!discountResult.success) {
-        this.logger.warn(
-          `Failed to apply loan discount: ${discountResult.error}`,
-        );
-      }
+      // Step 5: Apply discount to loan amount in smart contract - REMOVED
+      // The loan on EVM side (Dust2CashEscrow) must already be $0.
+      // The concept of discountRate on CollateralLock.sol is now decoupled from this flow.
+      this.logger.log(`Loan discount application step is removed as EVM loan should be zero.`);
 
       // Calculate estimated rewards (simplified calculation)
       const estimatedRewards = this.calculateEstimatedRewards(suiAmount);
@@ -183,7 +181,8 @@ export class SuiStakingService {
         bridgeTransactionHash: bridgeResult.transactionHash,
         suiStakingTransactionHash: stakingResult.transactionHash,
         stakedAmount: suiAmount,
-        discountedLoanAmount: userStatus.loanOwed,
+        // discountedLoanAmount is no longer relevant here as EVM loan is 0.
+        // We can remove it or set to '0'. For now, removing.
         validatorAddress: stakingResult.validatorAddress,
         estimatedRewards: estimatedRewards,
       };
@@ -449,6 +448,8 @@ export class SuiStakingService {
       
       // In a real implementation, save this record to a database
       this.logger.log(`Staking completed successfully: ${JSON.stringify(stakingRecord)}`);
+      this.logger.log(`User ${userAddress} staked ${suiAmount} SUI with validator ${selectedValidator}. Transaction: ${txHash}`);
+
 
       return {
         success: true,
@@ -456,7 +457,7 @@ export class SuiStakingService {
         validatorAddress: selectedValidator,
       };
     } catch (error) {
-      this.logger.error(`SUI staking failed: ${error.message}`, error.stack);
+      this.logger.error(`SUI staking failed for user ${userAddress}, amount ${suiAmount}: ${error.message}`, error.stack);
       return {
         success: false,
         error: error.message,

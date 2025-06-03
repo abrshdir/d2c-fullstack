@@ -225,44 +225,84 @@ export class CollateralLockService {
   private relayerPrivateKey: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.provider = new ethers.JsonRpcProvider(
-      this.configService.get<string>('ETHEREUM_RPC_URL') || 'YOUR_RPC_URL',
-    );
+    // Note: Most EVM functionalities of this service are being deprecated in favor of Dust2CashEscrowService.
+    // This service might be refactored to handle only SUI-related interactions or removed entirely
+    // if Dust2CashEscrowService covers all necessary features across chains.
 
-    this.relayerPrivateKey =
-      this.configService.get<string>('RELAYER_PRIVATE_KEY') || '';
-
-    this.collateralLockContract = new ethers.Contract(
-      this.contractAddress,
-      this.contractABI,
-      this.provider,
-    );
+    const ethRpcUrl = this.configService.get<string>('ETHEREUM_RPC_URL');
+    if (ethRpcUrl) {
+        this.provider = new ethers.JsonRpcProvider(ethRpcUrl);
+        this.relayerPrivateKey = this.configService.get<string>('RELAYER_PRIVATE_KEY') || '';
+        if (this.relayerPrivateKey) {
+            this.collateralLockContract = new ethers.Contract(
+              this.contractAddress,
+              this.contractABI,
+              new ethers.Wallet(this.relayerPrivateKey, this.provider), // Initialize with signer for SUI ops
+            );
+        } else {
+            this.logger.warn('Relayer private key not found, SUI operations will fail or be read-only.');
+            this.collateralLockContract = new ethers.Contract(
+              this.contractAddress,
+              this.contractABI,
+              this.provider, // Fallback to provider for read-only if no private key
+            );
+        }
+    } else {
+        this.logger.error('ETHEREUM_RPC_URL not configured. CollateralLockService may not function correctly.');
+        // Consider how to handle this error, e.g. by throwing or using a mock provider.
+        // For now, operations requiring this.provider will fail if ethRpcUrl is not set.
+    }
   }
 
+  /**
+   * @deprecated EVM collateral locking is now handled by Dust2CashEscrowService.
+   */
   async lockCollateral(
     userAddress: string,
     usdcAmount: string | ethers.BigNumberish,
     gasCost: string | ethers.BigNumberish,
   ): Promise<ethers.ContractTransactionResponse> {
-    const wallet = new ethers.Wallet(this.relayerPrivateKey, this.provider);
-    const contractWithSigner = this.collateralLockContract.connect(wallet);
-    return (contractWithSigner as any).lockCollateral(userAddress, usdcAmount, gasCost);
+    this.logger.warn('lockCollateral is deprecated for EVM; use Dust2CashEscrowService.depositForUser.');
+    if (!this.collateralLockContract || !this.collateralLockContract.runner?.provider) {
+        throw new Error('Provider not initialized for lockCollateral due to missing RPC URL or private key.');
+    }
+    throw new Error('lockCollateral is deprecated for EVM chains.');
   }
 
+  /**
+   * @deprecated EVM withdrawal is now handled by Dust2CashEscrowService. User calls withdrawFunds directly from the D2C Escrow.
+   */
   async withdraw(): Promise<ethers.ContractTransactionResponse> {
-    const wallet = new ethers.Wallet(this.relayerPrivateKey, this.provider);
-    const contractWithSigner = this.collateralLockContract.connect(wallet);
-    return (contractWithSigner as any).withdraw();
+    this.logger.warn('withdraw is deprecated for EVM; user should call withdrawFunds on Dust2CashEscrow contract.');
+    if (!this.collateralLockContract || !this.collateralLockContract.runner?.provider) {
+        throw new Error('Provider not initialized for withdraw due to missing RPC URL or private key.');
+    }
+    throw new Error('withdraw is deprecated for EVM chains.');
   }
 
+  /**
+   * @deprecated This method was tied to an EVM loan discount mechanism via CollateralLock.sol,
+   * which is no longer part of the primary SUI staking flow as EVM loans (in Dust2CashEscrow)
+   * must be paid off before SUI staking.
+   */
   async stakeOnSui(
     discountRate: number,
   ): Promise<ethers.ContractTransactionResponse> {
-    const wallet = new ethers.Wallet(this.relayerPrivateKey, this.provider);
-    const contractWithSigner = this.collateralLockContract.connect(wallet);
-    return (contractWithSigner as any).stakeOnSui(discountRate);
+    this.logger.warn(
+      'CollateralLockService.stakeOnSui is deprecated for the new SUI staking flow. ' +
+      'It was related to EVM loan discounts on CollateralLock.sol.'
+    );
+    if (!this.collateralLockContract || !this.collateralLockContract.runner?.provider) {
+        throw new Error('Provider not initialized for stakeOnSui due to missing RPC URL or private key.');
+    }
+    throw new Error('stakeOnSui on CollateralLockService is deprecated in the current SUI staking flow.');
+    // const wallet = new ethers.Wallet(this.relayerPrivateKey, this.provider);
+    // const contractWithSigner = this.collateralLockContract.connect(wallet);
+    // return (contractWithSigner as any).stakeOnSui(discountRate);
   }
 
+  // This function might still be relevant if CollateralLock.sol is used for SUI reward finalization on EVM.
+  // However, its usage needs to be re-evaluated in the context of the new staking flow.
   async finalizeRewards(
     userAddress: string,
     repayAmount: string | ethers.BigNumberish,
@@ -346,57 +386,45 @@ export class CollateralLockService {
   /**
    * Lock collateral for a user (called by relayer after swap) - Alternative implementation
    */
+  /**
+   * @deprecated EVM collateral locking is now handled by Dust2CashEscrowService.
+   */
   async lockCollateralWithWallet(
     userAddress: string,
     usdcAmount: string,
     loanAmount: string,
-    relayerWallet: ethers.Wallet,
+    relayerWallet: ethers.Wallet, // This parameter makes it EVM specific in this context
   ): Promise<{ success: boolean; transactionHash?: string; error?: string }> {
-    try {
-      const contract = new ethers.Contract(
-        COLLATERAL_LOCK_CONTRACT_ADDRESS,
-        COLLATERAL_LOCK_ABI,
-        relayerWallet,
-      );
-
-      const usdcAmountWei = ethers.parseUnits(usdcAmount, 6); // USDC has 6 decimals
-      const loanAmountWei = ethers.parseUnits(loanAmount, 6);
-
-      const tx = await contract.lockCollateral(
-        userAddress,
-        usdcAmountWei,
-        loanAmountWei,
-      );
-
-      const receipt = await tx.wait();
-
-      this.logger.log(
-        `Collateral locked for user ${userAddress}: ${usdcAmount} USDC`,
-      );
-
-      return {
-        success: true,
-        transactionHash: receipt.hash,
-      };
-    } catch (error) {
-      this.logger.error(`Failed to lock collateral: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-      };
+    this.logger.warn('lockCollateralWithWallet is deprecated for EVM; use Dust2CashEscrowService.depositForUser.');
+    if (!this.collateralLockContract || !this.collateralLockContract.runner?.provider) {
+        throw new Error('Provider not initialized for lockCollateralWithWallet due to missing RPC URL or private key.');
     }
+    throw new Error('lockCollateralWithWallet is deprecated for EVM chains.');
   }
 
   /**
-   * Get user's collateral and loan status
+   * @deprecated EVM user status (collateral/loan) is now handled by Dust2CashEscrowService.getUserAccountStatus.
+   * This method might still be used for SUI related loan status if CollateralLock.sol stores it.
+   * For pure EVM loans, Dust2CashEscrowService is the source of truth.
    */
   async getUserStatus(
     userAddress: string,
-    chainId: string,
+    chainId: string, // chainId might indicate if it's an EVM or SUI context
   ): Promise<{ collateral: string; loanOwed: string; hasActiveLoan: boolean }> {
+    this.logger.warn(
+      `getUserStatus for EVM chains is deprecated. Use Dust2CashEscrowService.getUserAccountStatus. ` +
+      `This method might be relevant for SUI loan portions if CollateralLock.sol is still used for that.`
+    );
+
+    // If it's an EVM chain that D2C Escrow handles, this data is stale/irrelevant for D2C loans.
+    // For example, if chainId is for Ethereum, Base, etc., this data is not for D2C.
+    if (!this.collateralLockContract || !this.collateralLockContract.runner?.provider) {
+        throw new Error('Provider not initialized for getUserStatus due to missing RPC URL or private key.');
+    }
+
     try {
-      const provider = this.getProviderForChain(chainId);
-      const contract = new ethers.Contract(
+      const provider = this.getProviderForChain(chainId); // This will use EVM provider based on chainId
+      const contract = new ethers.Contract( // Querying the old CollateralLock contract
         COLLATERAL_LOCK_CONTRACT_ADDRESS,
         COLLATERAL_LOCK_ABI,
         provider,
@@ -410,15 +438,15 @@ export class CollateralLockService {
       const collateralFormatted = ethers.formatUnits(collateral, 6);
       const loanOwedFormatted = ethers.formatUnits(loanOwed, 6);
 
+      this.logger.log(`CollateralLock status for ${userAddress} on chain ${chainId}: Collateral=${collateralFormatted}, LoanOwed=${loanOwedFormatted}`);
+
       return {
         collateral: collateralFormatted,
         loanOwed: loanOwedFormatted,
-        hasActiveLoan:
-          parseFloat(collateralFormatted) > 0 &&
-          parseFloat(loanOwedFormatted) > 0,
+        hasActiveLoan: parseFloat(loanOwedFormatted) > 0, // Active loan if loanOwed > 0
       };
     } catch (error) {
-      this.logger.error(`Failed to get user status: ${error.message}`);
+      this.logger.error(`Failed to get user status from CollateralLock for chain ${chainId}: ${error.message}`);
       return {
         collateral: '0',
         loanOwed: '0',
@@ -430,41 +458,50 @@ export class CollateralLockService {
   /**
    * Apply staking discount to user's loan
    */
+  /**
+   * @deprecated This method was used to trigger stakeOnSui in CollateralLock.sol for an EVM loan discount.
+   * With EVM loans in Dust2CashEscrow needing to be $0 before SUI staking, this specific utility is obsolete.
+   */
   async applyStakingDiscount(
     userAddress: string,
     discountRate: number,
     chainId: string,
   ): Promise<{ success: boolean; transactionHash?: string; error?: string }> {
-    try {
-      const provider = this.getProviderForChain(chainId);
-      const relayerWallet = new ethers.Wallet(this.relayerPrivateKey, provider);
+    this.logger.warn(
+      'CollateralLockService.applyStakingDiscount is deprecated. ' +
+      'EVM loan should be $0 before SUI staking, making this discount mechanism on CollateralLock.sol obsolete for this flow.'
+    );
+    throw new Error('applyStakingDiscount on CollateralLockService is deprecated.');
+    // try {
+    //   const provider = this.getProviderForChain(chainId);
+    //   const relayerWallet = new ethers.Wallet(this.relayerPrivateKey, provider);
 
-      const contract = new ethers.Contract(
-        COLLATERAL_LOCK_CONTRACT_ADDRESS,
-        COLLATERAL_LOCK_ABI,
-        relayerWallet,
-      );
+    //   const contract = new ethers.Contract(
+    //     COLLATERAL_LOCK_CONTRACT_ADDRESS,
+    //     COLLATERAL_LOCK_ABI,
+    //     relayerWallet,
+    //   );
 
-      // This should be called by the user, not the relayer
-      // But for automation, we can simulate it
-      const tx = await contract.stakeOnSui(discountRate);
-      const receipt = await tx.wait();
+    //   // This should be called by the user, not the relayer
+    //   // But for automation, we can simulate it
+    //   const tx = await contract.stakeOnSui(discountRate);
+    //   const receipt = await tx.wait();
 
-      this.logger.log(
-        `Applied ${discountRate}% discount for user ${userAddress}`,
-      );
+    //   this.logger.log(
+    //     `Applied ${discountRate}% discount for user ${userAddress}`,
+    //   );
 
-      return {
-        success: true,
-        transactionHash: receipt.hash,
-      };
-    } catch (error) {
-      this.logger.error(`Failed to apply staking discount: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
+    //   return {
+    //     success: true,
+    //     transactionHash: receipt.hash,
+    //   };
+    // } catch (error) {
+    //   this.logger.error(`Failed to apply staking discount: ${error.message}`);
+    //   return {
+    //     success: false,
+    //     error: error.message,
+    //   };
+    // }
   }
 
   /**
@@ -488,7 +525,8 @@ export class CollateralLockService {
   }
 
   /**
-   * Handle CollateralLocked event
+   * Handle CollateralLocked event - This event is from CollateralLock.sol,
+   * related Deposited event is in Dust2CashEscrow.sol
    */
   private async handleCollateralLocked(
     user: string,

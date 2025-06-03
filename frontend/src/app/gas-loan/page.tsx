@@ -37,15 +37,24 @@ const GasLoanPage: React.FC = () => {
 
     try {
       // TODO: Call the initiateGasLoanSwap API function here
-      // const response = await initiateGasLoanSwap({
-      //   amount: amount,
-      //   tokenAddress: selectedToken,
-      //   permit: permitData,
-      // });
-      // setLoanStatus(response); // Update state with the loan status from API
-      console.log('Initiating gas loan swap with:', { selectedToken, amount, permitData });
-      // Placeholder for successful API call response
-      setLoanStatus({ loanId: 'fake-loan-123', status: 'PENDING', transactionHash: 'fake-tx-abc', estimatedGasCost: '0.001' });
+      // Actual call to the API service
+      const response = await initiateGasLoanSwap({ // Assuming GasLoanRequest is compatible
+        amount: amount, // This might be 'value' depending on GasLoanRequest in api.ts
+        tokenAddress: selectedToken,
+        permit: permitData, // Ensure this structure matches what initiateGasLoanSwap expects
+        // Placeholder: these might need to be passed or derived if not in permitData
+        // userAddress: walletClient?.account?.address,
+        // chainId: walletClient?.chain?.id?.toString(),
+      });
+
+      setLoanStatus(response); // Update state with the GasLoanResult
+
+      if (response.success) {
+        // Clear form or give success feedback
+        console.log('Gas loan swap successful:', response);
+      } else {
+        setError(response.error || 'Gas loan swap failed for an unknown reason.');
+      }
 
     } catch (err: any) {
       setError(err.message || 'Failed to initiate gas loan swap.');
@@ -95,11 +104,24 @@ const GasLoanPage: React.FC = () => {
 
       {loanStatus && (
         <div className="mt-4 p-4 border rounded">
-          <h2 className="text-xl font-semibold mb-2">Loan Status</h2>
-          <p>Loan ID: {loanStatus.loanId}</p>
-          <p>Status: {loanStatus.status}</p>
-          {loanStatus.transactionHash && <p>Transaction Hash: {loanStatus.transactionHash}</p>}
-          {loanStatus.estimatedGasCost && <p>Estimated Gas Cost: {loanStatus.estimatedGasCost}</p>}
+          <h2 className="text-xl font-semibold mb-2">Gas Loan Swap Status</h2>
+          {loanStatus.success ? (
+            <>
+              <p className="text-green-600">Swap Successful!</p>
+              <p>Transaction Hash: {loanStatus.transactionHash}</p>
+              <p>USDC Obtained: {loanStatus.usdcObtained} USDC</p>
+              <p>Gas Cost (Loan Amount): {loanStatus.loanAmount} USDC</p>
+              <p className="font-semibold mt-2">
+                The swapped {loanStatus.usdcObtained} USDC has been deposited into the Dust2Cash Escrow contract.
+                Your outstanding loan for gas ({loanStatus.loanAmount} USDC) is recorded in the escrow.
+              </p>
+              <p className="mt-2">
+                Please visit your <a href="/dashboard" className="text-blue-500 hover:underline">Dashboard</a> to view and manage your loan.
+              </p>
+            </>
+          ) : (
+            <p className="text-red-600">Swap Failed: {loanStatus.error || "Unknown error"}</p>
+          )}
         </div>
       )}
     </div>

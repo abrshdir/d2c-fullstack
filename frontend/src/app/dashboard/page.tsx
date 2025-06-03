@@ -20,6 +20,8 @@ import { useAccount } from "wagmi"; // For EVM wallet
 // import { useWallet } from '@suiet/wallet-kit'; // For SUI wallet, if using Suiet
 import { GasLoanForm } from "@/components/dashboard/GasLoanForm";
 import { WithdrawForm } from "@/components/dashboard/WithdrawForm";
+import { RepayLoanForm } from "@/components/dashboard/RepayLoanForm";
+import { SuiStakingForm } from "@/components/dashboard/SuiStakingForm"; // Import SuiStakingForm
 import { DashboardMetrics } from "@/components/dashboard/DashboardMetrics";
 import { ActivityLog } from "@/components/dashboard/ActivityLog";
 
@@ -31,13 +33,10 @@ import {
   TransactionHistory, // Import TransactionHistory type
 } from "../../lib/api/api";
 
-// Mock data and types - replace with actual data fetching and types
-interface CollateralInfo {
-  tokenLocked: string;
-  gasLoanOwed: string;
-  netWithdrawable: string;
-}
+import { TokenScannerService, AccountStatusResponse } from "../../lib/api/tokenScanner"; // Import new service and type
 
+// Mock data and types - replace with actual data fetching and types
+// CollateralInfo interface removed
 interface SwapHistoryItem {
   id: string;
   sourceToken: string;
@@ -67,23 +66,7 @@ interface RewardsInfo {
 }
 
 // Mock API functions - replace with actual API calls
-const fetchCollateralInfo = async (
-  address: string
-): Promise<CollateralInfo> => {
-  console.log(`Fetching all collaterals for ${address}`);
-  // Replace with: await fetch(`/api/user/${address}/status`)
-  return new Promise((resolve) =>
-    setTimeout(
-      () =>
-        resolve({
-          tokenLocked: "100 USDC",
-          gasLoanOwed: "10 USDC",
-          netWithdrawable: "90 USDC",
-        }),
-      1000
-    )
-  );
-};
+// fetchCollateralInfo mock function removed
 
 const fetchSwapHistory = async (
   address: string
@@ -151,34 +134,50 @@ export default function DashboardPage() {
   // const { address: suiAddress, connected: isSuiConnected } = useWallet(); // Example for Suiet
   const [suiAddress, setSuiAddress] = useState<string | null>(null); // Placeholder for SUI address
   const [isSuiConnected, setIsSuiConnected] = useState(false); // Placeholder
-  const [stakingStatus, setStakingStatus] = useState(null);
-  const [transactionHistory, setTransactionHistory] = useState([]);
+  const [stakingStatus, setStakingStatus] = useState<StakingStatus | null>(null); // Typed state
+  const [transactionHistory, setTransactionHistory] = useState<TransactionHistory['transactions']>([]); // Typed state
+  const [accountStatus, setAccountStatus] = useState<AccountStatusResponse | null>(null); // New state for account status
   const [isLoading, setIsLoading] = useState(false);
 
-  const userAddress = evmAddress || suiAddress; // Prioritize EVM or adapt as needed
+  const userAddress = evmAddress; // Dashboard primarily focuses on EVM account status for D2C Escrow
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!userAddress) return;
+      if (!userAddress) {
+        setAccountStatus(null); // Clear account status if EVM address is not available
+        // Optionally clear other EVM-dependent states like transactionHistory if they are EVM specific
+        // setTransactionHistory([]);
+        // setStakingStatus(null); // If stakingStatus is purely EVM based for now
+        return;
+      }
 
       setIsLoading(true);
       try {
-        const [stakingStatusResult, transactionHistoryResult] = await Promise.all([
-          getStakingStatus('mockLoanId'),
-          getTransactionHistory(1, 10),
-        ]);
+        // Fetch account status, staking status, and transaction history
+        const promises = [
+          TokenScannerService.getAccountStatus(userAddress),
+          getStakingStatus('mockLoanId'), // Assuming 'mockLoanId' or similar, or make it conditional on userAddress
+          getTransactionHistory(1, 10), // Assuming this is generic or EVM related
+        ];
 
+        const [accountStatusResult, stakingStatusResult, transactionHistoryResult] = await Promise.all(promises as [Promise<AccountStatusResponse>, Promise<StakingStatus>, Promise<TransactionHistory>]);
+
+        setAccountStatus(accountStatusResult);
         setStakingStatus(stakingStatusResult);
         setTransactionHistory(transactionHistoryResult.transactions || []);
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
+        // Set error states or show notifications to the user
+        setAccountStatus(null); // Clear or set to an error state
+        setStakingStatus(null);
+        setTransactionHistory([]);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [userAddress]);
+  }, [userAddress]); // Dependency array includes userAddress
 
   // Placeholder for SUI wallet connection logic
   const handleSuiConnect = (addr: string | null) => {
@@ -247,21 +246,31 @@ export default function DashboardPage() {
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="gas-loan">Gas Loan</TabsTrigger>
-            <TabsTrigger value="withdraw">Withdraw</TabsTrigger>
+            <TabsTrigger value="gas-loan">Request Gas Loan</TabsTrigger>
+            <TabsTrigger value="repay-loan">Repay Loan</TabsTrigger>
+            <TabsTrigger value="withdraw">Withdraw Funds</TabsTrigger>
+            <TabsTrigger value="sui-stake">Stake on SUI</TabsTrigger> {/* New SUI Staking Tab */}
           </TabsList>
 
           <TabsContent value="overview" className="space-y-4">
-            <DashboardMetrics stakingStatus={stakingStatus} />
+            <DashboardMetrics accountStatus={accountStatus} stakingStatus={stakingStatus} />
             <ActivityLog activities={transactionHistory} />
           </TabsContent>
 
           <TabsContent value="gas-loan">
-            <GasLoanForm />
+            <GasLoanForm /> {/* This is for requesting a new loan */}
+          </TabsContent>
+
+          <TabsContent value="repay-loan">
+            <RepayLoanForm accountStatus={accountStatus} onRepaymentSuccess={fetchData} />
           </TabsContent>
 
           <TabsContent value="withdraw">
-            <WithdrawForm />
+            <WithdrawForm accountStatus={accountStatus} onWithdrawalInitiated={fetchData} />
+          </TabsContent>
+
+          <TabsContent value="sui-stake"> {/* New SUI Staking Tab Content */}
+            <SuiStakingForm accountStatus={accountStatus} onStakingSuccess={fetchData} />
           </TabsContent>
         </Tabs>
 

@@ -6,6 +6,7 @@ import {
   Query,
   ValidationPipe,
 } from '@nestjs/common';
+import { AccountStatusDto } from './dto/account-status.dto'; // Import the new DTO
 import {
   TokenScannerService,
   TokenWithValue,
@@ -18,11 +19,10 @@ import { GasLoanService } from './gas-loan.service';
 import { ethers } from 'ethers';
 import { PermitRequestDto } from './dto/permit-request.dto';
 import { CollateralLockService } from './collateral-lock.service';
+import { SuiStakingService, SuiStakingResult } from './sui-staking.service'; // Import SuiStakingService and Result
+import { SuiStakingRequest } from './types/sui-staking.types'; // Import the DTO
 
-interface StakeRequestDto {
-  walletAddress: string;
-  discountRate: number;
-}
+// Local StakeRequestDto removed
 
 interface SwapQuoteRequestDto {
   fromToken: string;
@@ -48,7 +48,8 @@ export class TokenScannerController {
     private readonly rubicSwapService: RubicSwapService,
     private readonly swapTransactionService: SwapTransactionService,
     private readonly gasLoanService: GasLoanService,
-    private readonly collateralLockService: CollateralLockService,
+    private readonly collateralLockService: CollateralLockService, // Remains for SUI logic, possibly for finalizeRewards
+    private readonly suiStakingService: SuiStakingService, // Inject SuiStakingService
   ) {}
 
   @Get('scan')
@@ -69,13 +70,15 @@ export class TokenScannerController {
     // Get user account status from the CollateralLock contract
     let outstandingDebt = 0;
     try {
+      // Fetching status from the new service via GasLoanService
       const accountStatus = await this.gasLoanService.getUserLoanStatus(
         queryDto.walletAddress,
-        '1', // Ethereum mainnet
+        '1', // Ethereum mainnet - chainId might be less relevant here if D2C Escrow is on a specific chain
       );
-      outstandingDebt = Number(accountStatus.loanOwed);
+      // Assuming getUserLoanStatus now returns { outstandingDebt: string, ... }
+      outstandingDebt = Number(accountStatus.outstandingDebt);
     } catch (error) {
-      console.error(`Error getting user account status: ${error.message}`);
+      console.error(`Error getting user account status: ${error.message}`, error.stack);
       // If there's an error, we'll default to 0 outstanding debt
     }
 
@@ -135,37 +138,39 @@ export class TokenScannerController {
 
   @Post('stake-on-sui')
   async stakeOnSui(
-    @Body() stakeRequest: StakeRequestDto,
-  ): Promise<{ success: boolean; transactionHash?: string; error?: string }> {
+    @Body(new ValidationPipe()) stakeRequest: SuiStakingRequest, // Use the imported DTO with ValidationPipe
+  ): Promise<SuiStakingResult> { // Return type should be SuiStakingResult
+    // The new flow is:
+    // 1. User ensures their EVM loan (outstandingDebt in Dust2CashEscrow) is $0.
+    //    This can be checked via the '/account-status' endpoint.
+    // 2. User withdraws the desired USDC amount from Dust2CashEscrow to their own EVM wallet.
+    //    This is a direct user interaction with the Dust2CashEscrow contract.
+    // 3. User calls this '/stake-on-sui' endpoint, providing their userAddress,
+    //    the chainId of their EVM wallet, and the usdcAmountToStake (which they have withdrawn).
+    // The discountRate in stakeRequest might be ignored or used for other SUI-side logic if any,
+    // but not for EVM loan discount as that loan should be zero.
+
     try {
-      // This is a simplified example. In a real implementation, you would:
-      // 1. Verify the user has collateral locked
-      // 2. Connect to the user's wallet (this would typically happen on the frontend)
-      // 3. Call the stakeOnSui method
-
-      // For demonstration purposes only - in a real app, you wouldn't handle private keys like this
-      const dummyWallet = new ethers.Wallet(
-        ethers.Wallet.createRandom().privateKey,
-      );
-
-      // This would be replaced with actual frontend integration where the user signs the transaction
-      const tx = await this.collateralLockService.stakeOnSui(
-        stakeRequest.discountRate,
-      );
-
-      const receipt = await tx.wait();
-      if (!receipt) {
-        throw new Error('Transaction receipt is null');
-      }
-
-      return {
-        success: true,
-        transactionHash: receipt.hash,
-      };
+      // The SuiStakingService.initiateSuiStaking will now handle:
+      // - Verifying outstandingDebt is 0 using Dust2CashEscrowService.
+      // - Taking usdcAmountToStake from stakeRequest.
+      // - Performing the bridge and SUI-side staking operations.
+      // - It no longer calls collateralLockService.applyStakingDiscount.
+      return await this.suiStakingService.initiateSuiStaking(stakeRequest);
     } catch (error) {
+      // Log the error or handle it as per application's error handling strategy
+      // The service itself might throw HttpException or return a result with an error message.
+      // Ensure this controller properly propagates or handles errors.
+      this.tokenScannerService.logger.error(`Error in stakeOnSui controller: ${error.message}`, error.stack);
       return {
         success: false,
-        error: error.message,
+        error: error.message || 'An unexpected error occurred during SUI staking initiation.',
+        // Initialize other fields of SuiStakingResult as undefined or default
+        bridgeTransactionHash: undefined,
+        suiStakingTransactionHash: undefined,
+        stakedAmount: undefined,
+        validatorAddress: undefined,
+        estimatedRewards: undefined,
       };
     }
   }
@@ -173,23 +178,26 @@ export class TokenScannerController {
   @Get('account-status')
   async getAccountStatus(
     @Query('walletAddress') walletAddress: string,
-  ): Promise<{
-    collateralAmount: string;
-    loanOwed: string;
-  }> {
+  ): Promise<AccountStatusDto> { // Use the new DTO
     const status = await this.gasLoanService.getUserLoanStatus(
       walletAddress,
-      '1', // Ethereum mainnet
+      '1', // Ethereum mainnet - chainId might be less relevant here
     );
+    // Adapt the 'status' object (which is now Dust2CashEscrow's status) to AccountStatusDto
     return {
-      collateralAmount: status.collateral,
-      loanOwed: status.loanOwed,
+      escrowedAmount: status.escrowedAmount,
+      outstandingDebt: status.outstandingDebt,
+      reputationScore: status.reputationScore,
+      isBlacklisted: status.isBlacklisted,
+      // For backward compatibility, if needed by frontend immediately:
+      collateralAmount: status.escrowedAmount, // Map escrowedAmount to old field
+      loanOwed: status.outstandingDebt,       // Map outstandingDebt to old field
     };
   }
 
-  // @Post('swap/quote')
-  // async getSwapQuote(
-  //   @Body(new ValidationPipe()) quoteRequest: SwapQuoteRequestDto,
+// @Post('swap/quote')
+// async getSwapQuote(
+//   @Body(new ValidationPipe()) quoteRequest: SwapQuoteRequestDto,
   // ): Promise<{
   //   success: boolean;
   //   data?: {

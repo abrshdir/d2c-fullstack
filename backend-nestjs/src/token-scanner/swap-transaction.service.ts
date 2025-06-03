@@ -66,6 +66,9 @@ export class SwapTransactionService {
 
   /**
    * Mark a transaction as paid
+   * @deprecated Loan status and repayment are now primarily managed by Dust2CashEscrowService.
+   * This service's `isPaid` flag might not reflect the true loan status on the Dust2CashEscrow contract.
+   * Use Dust2CashEscrowService.getUserAccountStatus for authoritative loan status.
    */
   markTransactionAsPaid(transactionId: string): boolean {
     const transaction = this.transactions.find((tx) => tx.id === transactionId);
@@ -82,6 +85,9 @@ export class SwapTransactionService {
 
   /**
    * Get total outstanding debt for a wallet
+   * @deprecated Loan status and debt tracking are now primarily managed by Dust2CashEscrowService.
+   * This method might provide outdated or conflicting information.
+   * Use Dust2CashEscrowService.getUserAccountStatus to get authoritative outstanding debt.
    */
   getTotalOutstandingDebt(walletAddress: string): number {
     return this.transactions
