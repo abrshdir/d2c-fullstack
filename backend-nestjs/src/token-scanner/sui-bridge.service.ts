@@ -275,9 +275,48 @@ export class SuiBridgeService {
         `Error executing gas-sponsored bridge: ${error.message}`,
         error.stack,
       );
+
+      // Handle specific error types
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle network-related errors
+      if (error.code === 'NETWORK_ERROR' || error.message.includes('network')) {
+        throw new HttpException(
+          'Network error occurred while bridging. Please check your connection and try again.',
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+
+      // Handle insufficient funds errors
+      if (error.message.includes('insufficient funds') || error.message.includes('gas required')) {
+        throw new HttpException(
+          'Insufficient funds to complete the bridge transaction. Please ensure you have enough native tokens for gas.',
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      // Handle contract-related errors
+      if (error.message.includes('contract') || error.message.includes('transaction')) {
+        throw new HttpException(
+          'Smart contract error occurred. The bridge contract may be paused or the transaction may be invalid.',
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      // Handle validation errors
+      if (error.message.includes('invalid') || error.message.includes('validation')) {
+        throw new HttpException(
+          `Invalid bridge request: ${error.message}`,
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      // Default error handling
       throw new HttpException(
         `Failed to execute bridge: ${error.message}`,
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }

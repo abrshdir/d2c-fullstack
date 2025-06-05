@@ -7,7 +7,7 @@ import {
   WithdrawRequest,
   WithdrawResponse,
   TransactionHistory,
-  Error,
+  ApiError,
 } from './types'; // Assuming types are generated or manually created based on openapi.yaml
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/v1';
@@ -33,26 +33,82 @@ async function fetchWithRetry<T>(
   retries = MAX_RETRIES
 ): Promise<T> {
   try {
+    const headers = new Headers();
+    headers.append('Content-Type', 'application/json');
+    const authHeaders = getAuthHeaders();
+    if (authHeaders.Authorization) {
+      headers.append('Authorization', authHeaders.Authorization);
+    }
+    if (options.headers) {
+      Object.entries(options.headers).forEach(([key, value]) => {
+        headers.append(key, value as string);
+      });
+    }
+
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders(),
-        ...options.headers,
-      },
+      headers,
     });
 
     if (!response.ok) {
-      const error: Error = await response.json();
-      throw new Error(error.message || 'An error occurred');
+      const error: ApiError = await response.json();
+      
+      // Handle specific HTTP status codes
+      switch (response.status) {
+        case 400:
+          throw new Error(`Bad request: ${error.message || 'Invalid request parameters'}`);
+        case 401:
+          throw new Error('Authentication required. Please log in again.');
+        case 403:
+          throw new Error('Access forbidden. You do not have permission to perform this action.');
+        case 404:
+          throw new Error(`Resource not found: ${endpoint}`);
+        case 429:
+          throw new Error('Too many requests. Please try again later.');
+        case 500:
+          throw new Error('Server error. Please try again later.');
+        case 503:
+          throw new Error('Service unavailable. Please try again later.');
+        default:
+          throw new Error(error.message || `Request failed with status ${response.status}`);
+      }
     }
 
     return response.json();
-  } catch (error) {
+  } catch (error: any) {
+    // Handle network errors
+    if (error.message.includes('network') || error.message.includes('fetch')) {
+      if (retries > 0) {
+        console.warn(`Network error, retrying... (${retries} attempts remaining)`);
+        await sleep(RETRY_DELAY);
+        return fetchWithRetry(endpoint, options, retries - 1);
+      }
+      throw new Error('Network error. Please check your internet connection and try again.');
+    }
+
+    // Handle timeout errors
+    if (error.message.includes('timeout') || error.message.includes('timed out')) {
+      if (retries > 0) {
+        console.warn(`Request timeout, retrying... (${retries} attempts remaining)`);
+        await sleep(RETRY_DELAY);
+        return fetchWithRetry(endpoint, options, retries - 1);
+      }
+      throw new Error('Request timed out. Please try again later.');
+    }
+
+    // Handle JSON parsing errors
+    if (error instanceof SyntaxError) {
+      throw new Error('Invalid response from server. Please try again later.');
+    }
+
+    // If we have retries left and it's not a specific error type, retry
     if (retries > 0) {
+      console.warn(`Request failed, retrying... (${retries} attempts remaining)`);
       await sleep(RETRY_DELAY);
       return fetchWithRetry(endpoint, options, retries - 1);
     }
+
+    // If we're out of retries, throw the error
     throw error;
   }
 }
@@ -76,9 +132,12 @@ function setCachedData<T>(key: string, data: T): void {
 
 // API functions with caching
 export async function initiateGasLoanSwap(request: GasLoanRequest): Promise<GasLoanResponse> {
-  return fetchWithRetry<GasLoanResponse>('/gas-loan/process-swap', {
+  return fetchWithRetry<GasLoanResponse>('/token-scanner/swap/quote', {
     method: 'POST',
-    body: JSON.stringify(request),
+    body: JSON.stringify({
+      token: request.token,
+      walletAddress: request.userAddress
+    }),
   });
 }
 

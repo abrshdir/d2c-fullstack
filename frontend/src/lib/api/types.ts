@@ -1,12 +1,14 @@
 export interface Token {
-  chainId: string;
   tokenAddress: string;
+  chainId: string;
   symbol: string;
   name: string;
   decimals: number;
   balance: string;
   balanceFormatted: number;
   usdValue: number;
+  address: string;
+  value: number;
 }
 
 export interface TokenScanResponse {
@@ -57,54 +59,71 @@ export interface PermitData {
 }
 
 export interface GasLoanRequest {
-  amount: string;
-  tokenAddress: string;
-  permit: { // ERC-2612 permit data
-    owner: string;
-    spender: string;
-    value: string;
-    deadline: string;
-    v: string;
-    r: string;
-    s: string;
-  };
+  userAddress: string;
+  tokenAmount: string;
+  gasDebt: string;
+  token: Token;
 }
 
 export interface GasLoanResponse {
-  loanId?: string;
-  status?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  transactionHash?: string;
-  estimatedGasCost?: string;
+  id: string;
+  userAddress: string;
+  tokenAmount: string;
+  gasDebt: string;
+  status: string;
+  createdAt: string;
+  contractTxHash?: string;
+  repaymentTxHash?: string;
+  repaidAt?: string;
+  missedAt?: string;
 }
 
-export interface StakingStatus {
-  loanId?: string;
-  status?: 'PENDING' | 'STAKED' | 'REWARDING' | 'COMPLETED';
-  stakedAmount?: string;
-  rewardsAccrued?: string;
-  lastUpdateTimestamp?: string;
+export enum StakingStatus {
+  ACTIVE = 'ACTIVE',
+  PENDING = 'PENDING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED'
 }
 
 export interface WithdrawRequest {
-  loanId: string;
+  walletAddress: string;
+  amount: string;
+  tokenAddress: string;
+  tokenSymbol: string;
 }
 
 export interface WithdrawResponse {
+  id: string;
+  walletAddress: string;
+  amount: string;
+  tokenAddress: string;
+  tokenSymbol: string;
+  status: string;
+  loanId?: string;
+  createdAt: string;
   transactionHash?: string;
-  status?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  amount?: string;
-  rewards?: string;
+  completedAt?: string;
+  failedAt?: string;
+  unstakingTransactionHash?: string;
+  finalizeTransactionHash?: string;
 }
 
 export interface TransactionHistory {
-  transactions?: Array<{
-    id?: string;
-    type?: 'DEPOSIT' | 'SWAP' | 'BRIDGE' | 'STAKE' | 'WITHDRAW';
-    status?: 'PENDING' | 'COMPLETED' | 'FAILED';
-    amount?: string;
-    timestamp?: string;
-    transactionHash?: string;
-  }>;
+  id: string;
+  type: string;
+  status: string;
+  amount: string;
+  tokenSymbol: string;
+  timestamp: string;
+  transactionHash?: string;
+  loanId?: string;
+  withdrawalId?: string;
+}
+
+export interface Error {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
 }
 
 // Note: 'Error' is a built-in type in TypeScript.
@@ -114,7 +133,10 @@ export interface TransactionHistory {
 // However, the error message refers to 'Error', so we will add an
 // interface named 'Error' for now to resolve the TypeScript error,
 // but be aware of the potential naming conflict.
-export interface Error {
+// However, the error message refers to 'Error', so we will add an
+// interface named 'Error' for now to resolve the TypeScript error,
+// but be aware of the potential naming conflict.
+export interface ApiErrorResponse {
   code?: string;
   message?: string;
   details?: object;

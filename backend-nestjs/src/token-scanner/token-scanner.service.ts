@@ -17,7 +17,9 @@ export interface TokenBalance {
 }
 
 export interface TokenWithValue extends TokenBalance {
-  usdValue: number;
+  // Add alias properties for compatibility
+  address: string; // Alias for tokenAddress
+  value: number; // Alias for balanceFormatted
 }
 
 // Add new interface for Permit Data
@@ -198,10 +200,11 @@ export class TokenScannerService {
     eligibleForGasLoan: boolean;
   }> {
     try {
+      // Validate wallet address
       if (!ethers.isAddress(walletAddress)) {
         throw new HttpException(
-          'Invalid wallet address',
-          HttpStatus.BAD_REQUEST,
+          'Invalid wallet address format',
+          HttpStatus.BAD_REQUEST
         );
       }
 
@@ -296,9 +299,48 @@ export class TokenScannerService {
       };
     } catch (error) {
       this.logger.error(`Error scanning wallet: ${error.message}`, error.stack);
+
+      // Handle specific error types
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle RPC errors
+      if (error.message.includes('RPC') || error.message.includes('network')) {
+        throw new HttpException(
+          'Failed to connect to blockchain network. Please try again later.',
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+
+      // Handle rate limiting
+      if (error.message.includes('rate limit') || error.message.includes('too many requests')) {
+        throw new HttpException(
+          'Too many requests. Please try again in a few moments.',
+          HttpStatus.TOO_MANY_REQUESTS
+        );
+      }
+
+      // Handle token contract errors
+      if (error.message.includes('contract') || error.message.includes('token')) {
+        throw new HttpException(
+          'Error reading token contract data. Some tokens may not be properly supported.',
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      // Handle price fetching errors
+      if (error.message.includes('price') || error.message.includes('coingecko')) {
+        throw new HttpException(
+          'Failed to fetch token prices. Some token values may be unavailable.',
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+
+      // Default error handling
       throw new HttpException(
         `Failed to scan wallet: ${error.message}`,
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -356,6 +398,8 @@ export class TokenScannerService {
         balance: token.tokenBalance,
         balanceFormatted,
         usdValue: 0, // Will be populated later
+        address: tokenAddress,
+        value: balanceFormatted,
       };
 
       // Get USD value
@@ -477,6 +521,8 @@ export class TokenScannerService {
             balance: tokenBalance.tokenBalance,
             balanceFormatted,
             usdValue: 0, // Will be populated later
+            address: tokenBalance.contractAddress,
+            value: balanceFormatted,
           });
         }
       }
@@ -493,6 +539,8 @@ export class TokenScannerService {
           balance: nativeBalance.toString(),
           balanceFormatted: nativeBalanceFormatted,
           usdValue: 0, // Will be populated later
+          address: chainConfig.nativeAddress,
+          value: nativeBalanceFormatted,
         });
       }
 
@@ -840,6 +888,8 @@ export class TokenScannerService {
             balance: '1000000',
             balanceFormatted: 1.0,
             usdValue: 1.0,
+            address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+            value: 1.0,
           },
           {
             chainId: '11155111',
@@ -850,6 +900,8 @@ export class TokenScannerService {
             balance: '100000000000000000',
             balanceFormatted: 0.1,
             usdValue: 0.1 * 2000, // Assuming 1 ETH = $2000
+            address: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+            value: 0.1,
           },
         ];
 

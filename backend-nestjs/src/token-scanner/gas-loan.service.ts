@@ -4,6 +4,8 @@ import { ethers } from 'ethers';
 import { TokenWithValue } from './token-scanner.service';
 import { RubicSwapService, SwapResult } from './rubic-swap.service';
 import { CollateralLockService } from './collateral-lock.service';
+import { SmartContractService } from './services/smart-contract.service';
+import { DatabaseService } from './services/database.service';
 
 export interface GasLoanRequest {
   userAddress: string;
@@ -36,6 +38,8 @@ export class GasLoanService {
     private readonly configService: ConfigService,
     private readonly rubicSwapService: RubicSwapService,
     private readonly collateralLockService: CollateralLockService,
+    private readonly smartContractService: SmartContractService,
+    private readonly databaseService: DatabaseService,
   ) {
     this.relayerPrivateKey = this.configService.get<string>(
       'RELAYER_PRIVATE_KEY',
@@ -315,6 +319,116 @@ export class GasLoanService {
         loanOwed: '0',
         hasActiveLoan: false,
       };
+    }
+  }
+
+  async createGasLoan(userAddress: string, tokenAmount: bigint, gasDebt: bigint) {
+    try {
+      // Record loan in database
+      const loan = await this.databaseService.createGasLoan({
+        userAddress,
+        tokenAmount: tokenAmount.toString(),
+        gasDebt: gasDebt.toString(),
+        status: 'PENDING',
+        createdAt: new Date(),
+      });
+
+      // Deposit to escrow contract
+      const tx = await this.smartContractService.depositForUser(
+        userAddress,
+        tokenAmount,
+        gasDebt
+      );
+
+      // Wait for transaction confirmation
+      await tx.wait();
+
+      // Update loan status
+      await this.databaseService.updateGasLoan(loan.id, {
+        status: 'ACTIVE',
+        contractTxHash: tx.hash,
+      });
+
+      return loan;
+    } catch (error) {
+      console.error('Error creating gas loan:', error);
+      throw error;
+    }
+  }
+
+  async repayGasLoan(userAddress: string, amount: bigint) {
+    try {
+      // Get user's loan from database
+      const loan = await this.databaseService.getActiveGasLoan(userAddress);
+      if (!loan) {
+        throw new Error('No active loan found for user');
+      }
+
+      // Repay the gas loan
+      const tx = await this.smartContractService.repayGasLoan(userAddress, amount);
+
+      // Wait for transaction confirmation
+      await tx.wait();
+
+      // Update loan status
+      await this.databaseService.updateGasLoan(loan.id, {
+        status: 'REPAID',
+        repaymentTxHash: tx.hash,
+        repaidAt: new Date(),
+      });
+
+      // Get updated user account from contract
+      const userAccount = await this.smartContractService.getUserAccount(userAddress);
+
+      // Update user reputation in database
+      await this.databaseService.updateUserReputation(
+        userAddress,
+        userAccount.reputationScore
+      );
+
+      // Instead, we'll just log the missed repayment
+      this.logger.warn(`User ${userAddress} missed repayment deadline`);
+
+      return {
+        loan,
+        userAccount,
+      };
+    } catch (error) {
+      console.error('Error repaying gas loan:', error);
+      throw error;
+    }
+  }
+
+  // Event handlers
+  async handleDepositEvent(event: any) {
+    try {
+      const { user, amount, gasDebt } = event.args;
+      await this.databaseService.createGasLoan({
+        userAddress: user,
+        tokenAmount: amount.toString(),
+        gasDebt: gasDebt.toString(),
+        status: 'ACTIVE',
+        contractTxHash: event.transactionHash,
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      console.error('Error handling deposit event:', error);
+    }
+  }
+
+  async handleRepaymentEvent(event: any) {
+    try {
+      const { user, amount } = event.args;
+      const loan = await this.databaseService.getActiveGasLoan(user);
+      if (loan) {
+        await this.databaseService.updateGasLoan(loan.id, {
+          status: 'REPAID',
+          repaymentTxHash: event.transactionHash,
+          repaidAt: new Date(),
+        });
+      }
+    } catch (error) {
+      console.error('Error handling repayment event:', error);
     }
   }
 }

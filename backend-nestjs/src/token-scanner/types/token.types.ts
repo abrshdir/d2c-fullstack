@@ -8,4 +8,5 @@ export interface TokenWithValue {
   tokenAddress: string;
   name: string;
   balanceFormatted: number;
+  value: number;
 } 

@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
 import { DatabaseService } from './database.service';
-import { Transaction, TransactionType, TransactionStatus } from '../entities/transaction.entity';
-import { Loan, LoanStatus } from '../entities/loan.entity';
-import { StakingPosition, StakingStatus } from '../entities/staking-position.entity';
+import { Transaction, TransactionType, TransactionStatus } from '../schemas/transaction.schema';
+import { Loan, LoanStatus } from '../schemas/loan.schema';
+import { StakingPosition, StakingStatus } from '../schemas/staking-position.schema';
 
 interface ValidatorInfo {
   address: string;

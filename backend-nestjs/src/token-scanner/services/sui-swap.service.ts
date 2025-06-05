@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
 import { DatabaseService } from './database.service';
-import { Transaction, TransactionType, TransactionStatus } from '../entities/transaction.entity';
-import { Loan, LoanStatus } from '../entities/loan.entity';
+import { Transaction, TransactionType, TransactionStatus } from '../schemas/transaction.schema';
+import { Loan, LoanStatus } from '../schemas/loan.schema';
 
 interface SwapQuoteRequest {
   sourceTokenAddress: string;

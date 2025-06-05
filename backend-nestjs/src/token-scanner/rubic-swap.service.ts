@@ -4,6 +4,13 @@ import { HttpService } from '@nestjs/axios';
 import { ethers } from 'ethers';
 import { firstValueFrom } from 'rxjs';
 import { TokenWithValue } from './token-scanner.service';
+import { SmartContractService } from './services/smart-contract.service';
+import { DatabaseService } from './services/database.service';
+import {
+  TransactionStatus,
+  TransactionType,
+  Transaction,
+} from './schemas/transaction.schema';
 
 /**
  * Response from the Rubic API for a swap quote
@@ -89,6 +96,10 @@ interface QuoteResponseDto {
     priceImpact: number;
     estimatedGas?: string;
   };
+  error?: {
+    code: number;
+    reason: string;
+  };
 }
 
 /**
@@ -113,7 +124,7 @@ interface SwapResponseDto {
 @Injectable()
 export class RubicSwapService {
   private readonly logger = new Logger(RubicSwapService.name);
-  private readonly rubicApiUrl = 'https://api-v2.rubic.exchange/api';
+  private readonly oneInchApiUrl = 'https://api.1inch.io/swap/v6.0';
   private readonly referrerAddress = 'stranded-value-scanner.app';
 
   // Contract addresses
@@ -124,6 +135,8 @@ export class RubicSwapService {
   constructor(
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,
+    private readonly smartContractService: SmartContractService,
+    private readonly databaseService: DatabaseService,
   ) {
     this.swapExecutorAddress = this.configService.get<string>(
       'SWAP_EXECUTOR_ADDRESS',
@@ -136,12 +149,13 @@ export class RubicSwapService {
   }
 
   /**
-   * Get the best swap quote from Rubic
+   * Get the best swap quote from 1inch
    * @param fromToken Source token address
    * @param toToken Destination token address
    * @param amount Amount to swap (formatted with decimals)
    * @param walletAddress User's wallet address
    * @param chainId Chain ID (e.g., '1' for Ethereum)
+   * @param referrer Referrer address
    * @returns Swap quote with best rate
    */
   async getSwapQuote(
@@ -150,6 +164,7 @@ export class RubicSwapService {
     amount: string,
     walletAddress: string,
     chainId: string,
+    referrer?: string,
   ): Promise<SwapQuote> {
     try {
       // Validate required parameters
@@ -162,52 +177,71 @@ export class RubicSwapService {
         walletAddress || '0x0000000000000000000000000000000000000000';
 
       const blockchainMap = {
-        '1': 'ETH',
-        '137': 'POLYGON',
-        '56': 'BSC',
-        '43114': 'AVALANCHE',
-        '42161': 'ARBITRUM',
-        '10': 'OPTIMISM',
-        '8453': 'BASE',
+        '1': 'ethereum',
+        '137': 'polygon',
+        '56': 'bsc',
+        '43114': 'avalanche',
+        '42161': 'arbitrum',
+        '10': 'optimism',
+        '8453': 'base',
       };
 
-      const srcTokenBlockchain = blockchainMap[chainId] || 'ETH';
-      const dstTokenBlockchain = srcTokenBlockchain; // Same chain swap
+      const chain = blockchainMap[chainId] || 'ethereum';
 
-      const requestBody: QuoteRequestDto = {
-        srcTokenAddress: fromToken.toLowerCase(),
-        srcTokenAmount: amount,
-        srcTokenBlockchain,
-        dstTokenAddress: toToken.toLowerCase(),
-        dstTokenBlockchain,
-        fromAddress: walletAddress.toLowerCase(),
-        receiver: walletAddress.toLowerCase(),
-        slippage: 0.35, // 1% slippage
-        referrer: this.referrerAddress,
-      };
+      // Build 1inch API URL with query parameters
+      const url = `${this.oneInchApiUrl}/${chain}/quote?` + new URLSearchParams({
+        fromTokenAddress: fromToken.toLowerCase(),
+        toTokenAddress: toToken.toLowerCase(),
+        amount: amount,
+        walletAddress: walletAddress.toLowerCase(),
+        slippage: '0.30', // 1% slippage
+        fee: '0', // No fee
+        allowPartialFill: 'false',
+        protocols: 'UNISWAP_V3,UNISWAP_V2,SUSHISWAP,CURVE,BALANCER_V2', // Major DEXes
+        referrer: referrer || this.referrerAddress,
+      }).toString();
 
-      this.logger.debug('Getting swap quote with params:', requestBody);
+      this.logger.debug('Getting swap quote with params:', url);
 
       const response = await firstValueFrom(
-        this.httpService.post<QuoteResponseDto>(
-          `${this.rubicApiUrl}/routes/quoteBest`,
-          requestBody,
-        ),
+        this.httpService.get(url, {
+          headers: {
+            'Accept': 'application/json',
+          }
+        })
       );
 
-      const { estimate, id, provider } = response.data;
+      this.logger.debug('response params:', response.data);
+
+      // Check for error response
+      if (response.data.error) {
+        throw new HttpException(
+          `Failed to get swap quote: ${response.data.error}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      const { toTokenAmount, fromTokenAmount, protocols, gas } = response.data;
+
+      // Validate the response data
+      if (!toTokenAmount || !fromTokenAmount) {
+        throw new HttpException(
+          'Invalid response from 1inch API: Missing required quote data',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
 
       this.logger.debug('Swap quote response:', response.data);
 
       return {
-        id,
+        id: response.data.id || '1inch-quote',
         fromToken: {
           address: fromToken,
           symbol: 'TOKEN', // Placeholder, should be fetched from token contract
           name: 'Token Name', // Placeholder, should be fetched from token contract
           decimals: 18, // Should be fetched from token contract
-          blockchain: srcTokenBlockchain,
-          balance: amount, // Using the input amount as balance
+          blockchain: chain,
+          balance: amount,
           usdValue: 0, // Placeholder, should be calculated
         },
         toToken: {
@@ -215,26 +249,39 @@ export class RubicSwapService {
           symbol: 'USDC', // Placeholder, should be fetched from token contract
           name: 'USD Coin', // Placeholder, should be fetched from token contract
           decimals: 6, // USDC has 6 decimals
-          blockchain: dstTokenBlockchain,
-          balance: estimate.destinationTokenAmount, // Using the estimated output amount
+          blockchain: chain,
+          balance: toTokenAmount,
           usdValue: 0, // Placeholder, should be calculated
         },
-        toTokenAmount: estimate.destinationTokenAmount,
-        fromTokenAmount: amount,
-        protocols: [provider],
-        estimatedGas: estimate.estimatedGas || '0',
+        toTokenAmount,
+        fromTokenAmount,
+        protocols: protocols || ['1inch'],
+        estimatedGas: gas || '0',
       };
     } catch (error) {
       this.logger.error(
         `Error getting swap quote: ${error.message}`,
         error.stack,
       );
+
+      // If it's already an HttpException, rethrow it
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle axios errors
       if (error.response) {
         this.logger.error('API Response:', error.response.data);
+        throw new HttpException(
+          `1inch API error: ${error.response.data.error || error.message}`,
+          error.response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        );
       }
+
+      // Handle other errors
       throw new HttpException(
         `Failed to get swap quote: ${error.message}`,
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
@@ -286,7 +333,7 @@ export class RubicSwapService {
 
       const response = await firstValueFrom(
         this.httpService.post<SwapResponseDto>(
-          `${this.rubicApiUrl}/routes/swap`,
+          `${this.oneInchApiUrl}/routes/swap`,
           requestBody,
         ),
       );
@@ -338,7 +385,7 @@ export class RubicSwapService {
     try {
       const response = await firstValueFrom(
         this.httpService.get<SwapStatus>(
-          `${this.rubicApiUrl}/info/status?srcTxHash=${txHash}`,
+          `${this.oneInchApiUrl}/info/status?srcTxHash=${txHash}`,
         ),
       );
 
@@ -366,86 +413,53 @@ export class RubicSwapService {
     walletAddress: string,
   ): Promise<SwapResult> {
     try {
-      // 1. Get the best swap quote
-      const quote = await this.getSwapQuote(
-        token.tokenAddress,
-        this.USDC_ETH,
-        token.balanceFormatted.toString(),
-        walletAddress,
-        token.chainId,
-      );
+      // Get the best swap quote
+      const quote = await this.getTokenSwapQuote(token);
 
-      // 2. Get the transaction data
-      const transaction = await this.getSwapTransaction(
+      // Execute the swap
+      const swapTx = await this.getSwapTransaction(
         quote.id,
-        token.tokenAddress,
+        token.address,
         this.USDC_ETH,
-        token.balanceFormatted.toString(),
+        token.value.toString(),
         walletAddress,
         token.chainId,
       );
 
-      // 3. Create a provider for the appropriate network
-      const isEthereum = token.chainId === '1';
-      const rpcUrl = isEthereum
-        ? this.configService.get<string>('ETHEREUM_RPC_URL')
-        : this.configService.get<string>('POLYGON_RPC_URL');
+      // Send the transaction
+      const tx = await this.smartContractService.sendTransaction(swapTx);
 
-      if (!rpcUrl) {
-        throw new Error(`RPC URL not configured for chain ${token.chainId}`);
-      }
-
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const relayerWallet = new ethers.Wallet(
-        this.configService.get<string>('RELAYER_PRIVATE_KEY', ''),
-        provider,
-      );
-
-      // 4. Estimate gas cost before sending
-      const gasEstimate = await provider.estimateGas({
-        to: transaction.to,
-        data: transaction.data,
-        value: transaction.value,
+      // Create transaction record
+      await this.databaseService.createTransaction({
+        walletAddress,
+        type: TransactionType.SWAP,
+        amount: token.value.toString(),
+        tokenAddress: token.address,
+        tokenSymbol: token.symbol,
+        transactionHash: tx.hash,
+        status: TransactionStatus.PENDING,
+        details: {
+          quoteId: quote.id,
+          toToken: this.USDC_ETH,
+          toTokenAmount: quote.toTokenAmount,
+        },
       });
 
-      const feeData = await provider.getFeeData();
-      const gasPriceWei =
-        feeData.gasPrice ||
-        feeData.maxFeePerGas ||
-        ethers.parseUnits('50', 'gwei');
-      const gasCostWei = gasEstimate * gasPriceWei;
-      const gasCostEth = ethers.formatEther(gasCostWei);
-
-      // 5. Send the transaction
-      const tx = await relayerWallet.sendTransaction({
-        to: transaction.to,
-        data: transaction.data,
-        value: transaction.value,
-        gasLimit: gasEstimate,
-      });
-
-      // 6. Wait for transaction to be mined
+      // Wait for transaction confirmation
       const receipt = await tx.wait();
-
-      if (!receipt || receipt.status !== 1) {
-        throw new Error('Transaction failed');
+      if (!receipt) {
+        throw new Error('Transaction receipt is null');
       }
 
       return {
         transactionHash: receipt.hash,
         usdcObtained: quote.toTokenAmount,
-        gasCost: gasCostEth,
+        gasCost: receipt.gasUsed.toString(),
         timestamp: Math.floor(Date.now() / 1000),
       };
     } catch (error) {
-      this.logger.error(
-        `Error executing gas-sponsored swap: ${error.message}`,
-        error.stack,
-      );
-      throw new HttpException(
-        `Failed to execute swap: ${error.message}`,
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      this.logger.error('Error executing gas sponsored swap:', error);
+      throw error;
     }
   }
 
@@ -456,11 +470,179 @@ export class RubicSwapService {
    */
   async getTokenSwapQuote(token: TokenWithValue): Promise<SwapQuote> {
     return this.getSwapQuote(
-      token.tokenAddress,
+      token.address,
       this.USDC_ETH,
-      token.balanceFormatted.toString(),
+      token.value.toString(),
       '', // Will be filled in by the controller
-      token.chainId,
+      '1', // Ethereum mainnet
     );
+  }
+
+  async executeSwap(
+    fromToken: string,
+    toToken: string,
+    amount: bigint,
+    userAddress: string,
+  ) {
+    try {
+      // Get quote from Rubic API
+      const quote = await this.getRubicQuote(fromToken, toToken, amount);
+
+      // Create initial transaction record
+      const transaction = await this.databaseService.createTransaction({
+        walletAddress: userAddress,
+        type: TransactionType.SWAP,
+        amount: amount.toString(),
+        tokenAddress: fromToken,
+        status: TransactionStatus.PENDING,
+        details: {
+          toToken,
+          quoteId: quote.quoteId,
+        },
+        createdAt: new Date(),
+      });
+
+      // Execute swap through contract
+      const tx = await this.smartContractService.executeSwap(
+        fromToken,
+        toToken,
+        amount,
+        quote.quoteId,
+        quote.swapData,
+      );
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
+      if (!receipt) {
+        await this.databaseService.updateTransaction(transaction.id, {
+          status: TransactionStatus.FAILED,
+        });
+        throw new Error('Transaction receipt is null');
+      }
+
+      await this.databaseService.updateTransaction(transaction.id, {
+        transactionHash: receipt.hash,
+        status: TransactionStatus.CONFIRMED,
+      });
+
+      const swapEvents = receipt.logs.filter(
+        (log) =>
+          log.topics[0] === this.smartContractService.getSwapEventTopic(),
+      );
+
+      if (swapEvents.length > 0) {
+        const swapEvent = this.smartContractService.parseSwapEvent(
+          swapEvents[0],
+        );
+        const gasDebt = this.calculateGasDebt(swapEvent);
+
+        await this.databaseService.updateTransaction(transaction.id, {
+          details: {
+            ...transaction.details,
+            gasDebt: gasDebt.toString(),
+            completedAt: new Date(),
+          },
+        });
+
+        return {
+          txHash: receipt.hash,
+          fromAmount: swapEvent.args.fromAmount,
+          toAmount: swapEvent.args.toAmount,
+          quoteId: quote.quoteId,
+        };
+      }
+
+      throw new Error('Swap transaction failed or no swap event found');
+    } catch (error) {
+      console.error('Error executing swap:', error);
+      throw error;
+    }
+  }
+
+  private async getRubicQuote(
+    fromToken: string,
+    toToken: string,
+    amount: bigint,
+  ) {
+    // Implementation of Rubic API quote request
+    // This would make an HTTP request to Rubic's API
+    // For now, returning mock data
+    return {
+      quoteId: 'mock-quote-id',
+      swapData: 'mock-swap-data',
+    };
+  }
+
+  // Event handlers
+  async handleSwapEvent(event: any) {
+    try {
+      const { user, fromToken, toToken, fromAmount, toAmount, quoteId } =
+        event.args;
+
+      // Update transaction status in database
+      await this.databaseService.updateTransactionByQuoteId(quoteId, {
+        status: TransactionStatus.CONFIRMED,
+        details: {
+          completedAt: new Date(),
+        },
+      });
+
+      // Create gas loan for the user
+      const gasDebt = this.calculateGasDebt(event);
+      await this.smartContractService.depositForUser(user, toAmount, gasDebt);
+    } catch (error) {
+      console.error('Error handling swap event:', error);
+    }
+  }
+
+  private calculateGasDebt(event: any): bigint {
+    // Calculate gas debt based on transaction
+    // This would include gas price and gas used
+    // For now, returning a mock value
+    return BigInt(1000000); // 0.001 ETH
+  }
+
+  // Add these helper methods
+  private getSwapEventTopic(): string {
+    // Return the event topic hash for the swap event
+    return '0x...'; // Replace with actual event topic hash
+  }
+
+  private parseSwapEvent(event: any): any {
+    // Parse the swap event data
+    return {
+      // Add event parsing logic here
+    };
+  }
+
+  async getGasLoanQuote(
+    token: TokenWithValue,
+    walletAddress: string,
+  ): Promise<SwapQuote> {
+    try {
+      // Get USDC address based on chain
+      const usdcAddress =
+        token.chainId === '137'
+          ? this.USDC_POLYGON
+          : this.USDC_ETH;
+
+      // Get swap quote
+      const quote = await this.getSwapQuote(
+        token.tokenAddress,
+        usdcAddress,
+        token.value.toString(),
+        walletAddress,
+        token.chainId,
+        this.referrerAddress,
+      );
+
+      return quote;
+    } catch (error) {
+      this.logger.error(
+        `Error getting gas loan quote: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
   }
 }

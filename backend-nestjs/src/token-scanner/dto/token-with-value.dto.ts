@@ -33,4 +33,11 @@ export class TokenWithValueDto implements TokenWithValue {
 
   @IsNumber()
   usdValue: number;
+
+  @IsString()
+  @IsNotEmpty()
+  address: string;
+
+  @IsNumber()
+  value: number;
 }

@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
 import { DatabaseService } from './database.service';
-import { Transaction, TransactionType, TransactionStatus } from '../entities/transaction.entity';
-import { Loan, LoanStatus } from '../entities/loan.entity';
-import { StakingPosition, StakingStatus } from '../entities/staking-position.entity';
-import { Withdrawal, WithdrawalStatus } from '../entities/withdrawal.entity';
+import { Transaction, TransactionType, TransactionStatus } from '../schemas/transaction.schema';
+import { Loan, LoanStatus } from '../schemas/loan.schema';
+import { StakingPosition, StakingStatus } from '../schemas/staking-position.schema';
+import { Withdrawal, WithdrawalStatus } from '../schemas/withdrawal.schema';
 
 interface WithdrawalRequest {
   loanId: string;
@@ -34,6 +35,7 @@ interface FinalizeResult {
 export class SuiWithdrawalService {
   private suiRpcUrl: string;
   private suiPrivateKey: string;
+  private readonly logger = new Logger(SuiWithdrawalService.name);
 
   constructor(
     private readonly configService: ConfigService,
@@ -59,10 +61,9 @@ export class SuiWithdrawalService {
       const withdrawal = await this.databaseService.createWithdrawal({
         loanId: request.loanId,
         walletAddress: request.walletAddress,
-        stakedAmount: request.stakedAmount,
-        accruedRewards: request.accruedRewards,
-        accruedAmount: '0',
-        totalAmount: request.stakedAmount,
+        amount: request.stakedAmount,
+        tokenAddress: loan.collateralTokenAddress,
+        tokenSymbol: loan.collateralTokenSymbol,
         status: WithdrawalStatus.PENDING,
       });
 
@@ -124,7 +125,7 @@ export class SuiWithdrawalService {
         transactionHash: data.transactionHash,
       };
     } catch (error) {
-      console.error('Error initiating withdrawal:', error);
+      this.logger.error('Error initiating withdrawal:', error);
       throw error;
     }
   }
@@ -133,15 +134,19 @@ export class SuiWithdrawalService {
     try {
       // Get withdrawal record
       const withdrawal = await this.databaseService.getWithdrawalById(request.withdrawalId);
+      
+      if (!withdrawal) {
+        throw new Error(`Withdrawal with ID ${request.withdrawalId} not found`);
+      }
 
       // Create transaction record
       const transaction = await this.databaseService.createTransaction({
-        loanId: withdrawal.loanId,
+        loanId: withdrawal.loanId || undefined,
         walletAddress: request.walletAddress,
         type: TransactionType.FINALIZE_WITHDRAWAL,
-        amount: withdrawal.totalAmount,
-        tokenAddress: '', // Will be updated after swap
-        tokenSymbol: '', // Will be updated after swap
+        amount: withdrawal.amount,
+        tokenAddress: withdrawal.tokenAddress,
+        tokenSymbol: withdrawal.tokenSymbol,
         status: TransactionStatus.PENDING,
         details: {
           withdrawalId: withdrawal.id,
@@ -178,18 +183,19 @@ export class SuiWithdrawalService {
         finalizeTransactionHash: data.transactionHash,
       });
 
-      // Update loan status
-      const loan = await this.databaseService.getLoanById(withdrawal.loanId);
-      await this.databaseService.updateLoan(withdrawal.loanId, {
-        status: LoanStatus.COMPLETED,
-      });
+      // Update loan status if loanId exists
+      if (withdrawal.loanId) {
+        await this.databaseService.updateLoan(withdrawal.loanId, {
+          status: LoanStatus.COMPLETED,
+        });
+      }
 
       return {
         status: WithdrawalStatus.COMPLETED,
         transactionHash: data.transactionHash,
       };
     } catch (error) {
-      console.error('Error finalizing withdrawal:', error);
+      this.logger.error('Error finalizing withdrawal:', error);
       throw error;
     }
   }
@@ -197,19 +203,23 @@ export class SuiWithdrawalService {
   async getWithdrawalStatus(withdrawalId: string): Promise<WithdrawalStatus> {
     try {
       const withdrawal = await this.databaseService.getWithdrawalById(withdrawalId);
-      return withdrawal.status;
+      if (!withdrawal) {
+        throw new Error(`Withdrawal with ID ${withdrawalId} not found`);
+      }
+      return withdrawal.status as WithdrawalStatus;
     } catch (error) {
-      console.error('Error getting withdrawal status:', error);
+      this.logger.error('Error getting withdrawal status:', error);
       throw error;
     }
   }
 
-  async getWithdrawalDetails(withdrawalId: string): Promise<Withdrawal> {
+  async getWithdrawalDetails(withdrawalId: string): Promise<Withdrawal | null> {
     try {
-      return await this.databaseService.getWithdrawalById(withdrawalId);
+      const withdrawal = await this.databaseService.getWithdrawalById(withdrawalId);
+      return withdrawal as unknown as Withdrawal | null;
     } catch (error) {
-      console.error('Error getting withdrawal details:', error);
+      this.logger.error('Error getting withdrawal details:', error);
       throw error;
     }
   }
-} 
+}

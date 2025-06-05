@@ -1,0 +1,48 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model GasLoan {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  userAddress     String
+  tokenAmount     String
+  gasDebt         String
+  status          String
+  createdAt       DateTime @default(now())
+  contractTxHash  String?
+  repaymentTxHash String?
+  repaidAt        DateTime?
+  missedAt        DateTime?
+}
+
+model Withdrawal {
+  id                      String   @id @default(auto()) @map("_id") @db.ObjectId
+  walletAddress          String
+  amount                 String
+  tokenAddress           String
+  tokenSymbol            String
+  status                 String
+  loanId                 String?   @db.ObjectId
+  createdAt              DateTime  @default(now())
+  transactionHash        String?
+  completedAt            DateTime?
+  failedAt               DateTime?
+  unstakingTransactionHash String?
+  finalizeTransactionHash  String?
+}
+
+model UserReputation {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  userAddress     String   @unique
+  reputationScore Float
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+} 

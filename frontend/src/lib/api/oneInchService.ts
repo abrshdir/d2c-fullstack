@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { Token } from './types';
 
 // API endpoints - all calls to 1inch should go through our backend
 const BASE_URL = 'http://localhost:3001/token-scanner/swap';
@@ -160,10 +161,13 @@ class OneInchService {
               tokenAddress: fromTokenAddress,
               symbol: token.symbol,
               name: token.name,
+              toTokenAddress,
               decimals: token.decimals,
               balance: amount,
               balanceFormatted: amount,
-              usdValue: token.usdValue || 0
+              usdValue: token.usdValue || 0,
+              address: fromTokenAddress,
+              value: parseFloat(amount)
             },
             walletAddress: walletAddress
           })
@@ -182,7 +186,7 @@ class OneInchService {
       }
       
       return data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error getting quote:', error);
       // Re-throw the error with a user-friendly message
       throw new Error(error.message || 'Failed to get swap quote. Please try again later.');
@@ -261,7 +265,7 @@ class OneInchService {
     } catch (error) {
       console.error('Error getting swap transaction:', error);
       // Fallback to a mock response if API call fails
-      const quote = await this.getQuote(chainId, fromTokenAddress, toTokenAddress, amount);
+      const quote = await this.getQuote(chainId, fromTokenAddress, toTokenAddress, amount, token, fromAddress);
       const gasPriceData = await this.getGasPrice(chainId);
       const gasPrice = gasPriceData.maxFeePerGas;
       

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
@@ -33,7 +33,10 @@ export class OneInchService {
   async getGasPrice(chainId: number = 1): Promise<GasPriceResponse> {
     try {
       if (!this.apiKey) {
-        throw new Error('1inch API key is not configured');
+        throw new HttpException(
+          '1inch API key is not configured. Please contact support.',
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
       }
 
       const response = await firstValueFrom(
@@ -52,15 +55,71 @@ export class OneInchService {
     } catch (error) {
       let errorMessage = 'Failed to fetch gas price from 1inch API';
       
-      if (error instanceof AxiosError && error.response) {
-        errorMessage = `1inch API error: ${error.response.status} - ${
-          error.response.data?.description || error.message
-        }`;
+      // Handle specific error types
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Handle Axios errors
+      if (error instanceof AxiosError) {
+        if (error.response) {
+          // Handle specific HTTP status codes
+          switch (error.response.status) {
+            case 401:
+              throw new HttpException(
+                'Invalid 1inch API key. Please contact support.',
+                HttpStatus.UNAUTHORIZED
+              );
+            case 403:
+              throw new HttpException(
+                'Access to 1inch API is forbidden. Please contact support.',
+                HttpStatus.FORBIDDEN
+              );
+            case 429:
+              throw new HttpException(
+                'Rate limit exceeded for 1inch API. Please try again later.',
+                HttpStatus.TOO_MANY_REQUESTS
+              );
+            case 500:
+              throw new HttpException(
+                '1inch API is currently unavailable. Please try again later.',
+                HttpStatus.SERVICE_UNAVAILABLE
+              );
+            default:
+              errorMessage = `1inch API error: ${error.response.status} - ${
+                error.response.data?.description || error.message
+              }`;
+          }
+        } else if (error.request) {
+          throw new HttpException(
+            'No response from 1inch API. Please check your network connection.',
+            HttpStatus.SERVICE_UNAVAILABLE
+          );
+        }
+      }
+
+      // Handle network errors
+      if (error.message.includes('network') || error.message.includes('connect')) {
+        throw new HttpException(
+          'Network error while connecting to 1inch API. Please check your connection.',
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+
+      // Handle invalid chain ID
+      if (error.message.includes('chain') || error.message.includes('network')) {
+        throw new HttpException(
+          `Unsupported chain ID: ${chainId}. Please use a supported network.`,
+          HttpStatus.BAD_REQUEST
+        );
       }
       
       this.logger.error(errorMessage, error.stack);
       
-      throw new Error(errorMessage);
+      throw new HttpException(
+        errorMessage,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 }

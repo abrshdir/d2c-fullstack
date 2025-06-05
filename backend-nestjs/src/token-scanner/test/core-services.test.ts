@@ -125,15 +125,16 @@ describe('Core Services Integration Tests', () => {
 
     it('should get swap quote', async () => {
       const mockToken: TokenWithValue = {
-        address: '0x1234567890123456789012345678901234567890',
-        symbol: 'USDC',
-        decimals: 6,
-        balance: '1000000',
-        usdValue: 10,
         chainId: '1',
-        tokenAddress: '0x1234567890123456789012345678901234567890',
-        name: 'USD Coin',
+        tokenAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        symbol: 'ETH',
+        name: 'Ethereum',
+        decimals: 18,
+        balance: '1000000000000000000',
         balanceFormatted: 1.0,
+        usdValue: 2000,
+        address: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        value: 1.0
       };
 
       try {
@@ -266,6 +267,7 @@ describe('Core Services Integration Tests', () => {
         tokenAddress: '0x1234567890123456789012345678901234567890',
         name: 'USD Coin',
         balanceFormatted: 1.0,
+        value: 1.0
       };
 
       try {
@@ -294,6 +296,7 @@ describe('Core Services Integration Tests', () => {
           tokenAddress: '0xA0b86a33E6441b8dB2B2B0b0b0b0b0b0b0b0b0b0',
           name: 'USD Coin',
           balanceFormatted: 10.0,
+          value: 10.0
         },
         permitData: {
           deadline: Math.floor(Date.now() / 1000) + 3600,

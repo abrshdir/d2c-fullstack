@@ -26,6 +26,12 @@ class TokenDto implements TokenWithValue {
 
   @IsNotEmpty()
   usdValue: number;
+
+  @IsNotEmpty()
+  address: string;
+
+  @IsNotEmpty()
+  value: number;
 }
 
 export class SwapRequestDto {

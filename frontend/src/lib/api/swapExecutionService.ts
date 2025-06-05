@@ -117,7 +117,7 @@ class SwapExecutionService {
           result.error = "Transaction failed: insufficient funds or high slippage";
           console.log(`Mock transaction failed: ${mockTxHash}`);
         }
-      } catch (quoteError) {
+      } catch (quoteError: any) {
         // Handle quote errors specifically
         result.status = TransactionStatus.FAILED;
         result.error = quoteError.message;
@@ -193,7 +193,7 @@ class SwapExecutionService {
           gasCostInEth: gasCost,
           gasCostInUsd: gasCostInUsd.toFixed(2),
         };
-      } catch (quoteError) {
+      } catch (quoteError: any) {
         // If we can't get a quote, return a default gas estimate
         console.warn(`Could not get quote for gas estimate: ${quoteError.message}`);
         return {

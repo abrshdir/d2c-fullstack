@@ -7,12 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { initiateGasLoanSwap } from "@/lib/api/api";
-import { GasLoanRequest } from "@/lib/api/types";
+import { GasLoanRequest, Token } from "@/lib/api/types";
 import { TokenSelection } from "@/components/TokenSelection";
 
 export function GasLoanForm() {
   const [amount, setAmount] = useState("");
-  const [selectedToken, setSelectedToken] = useState<string | null>(null);
+  const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
@@ -30,23 +30,28 @@ export function GasLoanForm() {
     setIsLoading(true);
     try {
       const request: GasLoanRequest = {
-        amount,
-        tokenAddress: selectedToken,
-        permit: {
-          owner: "", // This should be populated from wallet
-          spender: "", // This should be populated from contract
-          value: amount,
-          deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
-          v: "",
-          r: "",
-          s: "",
-        },
+        userAddress: "", // TODO: Get from wallet
+        tokenAmount: amount,
+        gasDebt: "0", // TODO: Calculate based on current gas prices
+        token: {
+          tokenAddress: selectedToken.tokenAddress,
+          chainId: selectedToken.chainId,
+          symbol: selectedToken.symbol,
+          name: selectedToken.name,
+          decimals: selectedToken.decimals,
+          balance: selectedToken.balance,
+          balanceFormatted: selectedToken.balanceFormatted,
+          usdValue: selectedToken.usdValue,
+          address: selectedToken.tokenAddress, // Required by backend
+          value: parseFloat(amount) // Required by backend - amount to swap
+        }
       };
 
+      console.log('Sending request:', JSON.stringify(request, null, 2));
       const response = await initiateGasLoanSwap(request);
       toast({
         title: "Success",
-        description: `Gas loan initiated with ID: ${response.loanId}`,
+        description: `Gas loan initiated with ID: ${response.id}`,
       });
     } catch (error) {
       toast({
@@ -72,7 +77,7 @@ export function GasLoanForm() {
           <div className="space-y-2">
             <Label htmlFor="token">Select Token</Label>
             <TokenSelection
-              onSelect={setSelectedToken}
+              onTokenSelect={setSelectedToken}
               selectedToken={selectedToken}
             />
           </div>

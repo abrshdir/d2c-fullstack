@@ -24,7 +24,7 @@ export const handleValidateAmount = async (
   }
 
   // Amount must not exceed the user's balance
-  const tokenBalance = parseFloat(token.balanceFormatted);
+  const tokenBalance = parseFloat(token.balanceFormatted.toString());
   if (amount > tokenBalance) {
     return {
       valid: false,
@@ -38,16 +38,6 @@ export const handleValidateAmount = async (
     return {
       valid: false,
       message: `Amount must be at least ${minAmount} ${token.symbol}`,
-    };
-  }
-
-  // Validate the amount in USD value (at least $5 worth for this example)
-  const minUsdValue = 5;
-  const amountUsdValue = amount * token.usdValue;
-  if (amountUsdValue < minUsdValue) {
-    return {
-      valid: false,
-      message: `Amount must be worth at least $${minUsdValue} (currently $${amountUsdValue.toFixed(2)})`,
     };
   }
 

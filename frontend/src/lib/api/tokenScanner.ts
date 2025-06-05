@@ -3,7 +3,17 @@ import { TokenScanResponse, ApiError } from "./types";
 const API_BASE_URL = "http://localhost:3001";
 const isDevelopment = process.env.NODE_ENV !== "development";
 
+// Cache configuration
+const CACHE_DURATION = 100 * 5 * 60 * 1000; // 5 minutes in milliseconds
+
+interface CacheEntry {
+  data: TokenScanResponse;
+  timestamp: number;
+}
+
 export class TokenScannerService {
+  private static cache: Map<string, CacheEntry> = new Map();
+
   private static async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
       const error: ApiError = await response.json();
@@ -16,9 +26,20 @@ export class TokenScannerService {
     return data;
   }
 
+  private static isCacheValid(timestamp: number): boolean {
+    return Date.now() - timestamp < CACHE_DURATION;
+  }
+
   static async scanWallet(walletAddress: string): Promise<TokenScanResponse> {
     if (!walletAddress) {
       throw new Error("Wallet address is required");
+    }
+
+    // Check cache first
+    const cachedEntry = this.cache.get(walletAddress);
+    if (cachedEntry && this.isCacheValid(cachedEntry.timestamp)) {
+      console.log("Using cached token data for wallet:", walletAddress);
+      return cachedEntry.data;
     }
 
     try {
@@ -48,10 +69,18 @@ export class TokenScannerService {
           usdValue: Number((token.usdValue || 0).toFixed(5)),
         }));
 
-      return {
+      const processedData = {
         hasStrandedValue: Boolean(data.hasStrandedValue),
         topTokens: nonZeroTokens,
       };
+
+      // Store in cache
+      this.cache.set(walletAddress, {
+        data: processedData,
+        timestamp: Date.now(),
+      });
+
+      return processedData;
     } catch (error) {
       console.error("Error in scanWallet:", error);
       throw new Error(
@@ -59,6 +88,15 @@ export class TokenScannerService {
           error instanceof Error ? error.message : "Unknown error"
         }`
       );
+    }
+  }
+
+  // Method to clear cache for a specific wallet or all wallets
+  static clearCache(walletAddress?: string) {
+    if (walletAddress) {
+      this.cache.delete(walletAddress);
+    } else {
+      this.cache.clear();
     }
   }
 }

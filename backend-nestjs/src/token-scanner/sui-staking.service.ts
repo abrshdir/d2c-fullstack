@@ -209,14 +209,16 @@ export class SuiStakingService {
       
       // Create a token object for bridging with the correct properties
       const token: TokenWithValue = {
-        chainId: sourceChainId,
-        tokenAddress: this.getUsdcAddress(sourceChainId),
-        symbol: 'USDC',
-        name: 'USD Coin',
-        decimals: 6,
-        balance: ethers.parseUnits(usdcAmount, 6).toString(),
-        balanceFormatted: parseFloat(usdcAmount),
-        usdValue: parseFloat(usdcAmount),
+        chainId: '1',
+        tokenAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        symbol: 'ETH',
+        name: 'Ethereum',
+        decimals: 18,
+        balance: '1000000000000000000',
+        balanceFormatted: 1.0,
+        usdValue: 2000,
+        address: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        value: 1.0
       };
 
       // Get the bridge quote first
