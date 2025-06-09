@@ -5,6 +5,7 @@ const isDevelopment = process.env.NODE_ENV !== "development";
 
 // Cache configuration
 const CACHE_DURATION = 100 * 5 * 60 * 1000; // 5 minutes in milliseconds
+const CACHE_KEY_PREFIX = 'token_scanner_cache_';
 
 interface CacheEntry {
   data: TokenScanResponse;
@@ -12,7 +13,9 @@ interface CacheEntry {
 }
 
 export class TokenScannerService {
-  private static cache: Map<string, CacheEntry> = new Map();
+  private static getCacheKey(walletAddress: string): string {
+    return `${CACHE_KEY_PREFIX}${walletAddress.toLowerCase()}`;
+  }
 
   private static async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
@@ -36,10 +39,20 @@ export class TokenScannerService {
     }
 
     // Check cache first
-    const cachedEntry = this.cache.get(walletAddress);
-    if (cachedEntry && this.isCacheValid(cachedEntry.timestamp)) {
-      console.log("Using cached token data for wallet:", walletAddress);
-      return cachedEntry.data;
+    const cacheKey = this.getCacheKey(walletAddress);
+    const cachedData = localStorage.getItem(cacheKey);
+    
+    if (cachedData) {
+      try {
+        const cachedEntry: CacheEntry = JSON.parse(cachedData);
+        if (this.isCacheValid(cachedEntry.timestamp)) {
+          console.log("Using cached token data for wallet:", walletAddress);
+          return cachedEntry.data;
+        }
+      } catch (error) {
+        console.error("Error parsing cached data:", error);
+        // If there's an error parsing the cache, we'll proceed with a fresh fetch
+      }
     }
 
     try {
@@ -64,9 +77,16 @@ export class TokenScannerService {
       const nonZeroTokens = tokens
         .filter((token) => token.balanceFormatted > 0)
         .map((token) => ({
-          ...token,
+          tokenAddress: token.tokenAddress,
+          chainId: token.chainId,
+          symbol: token.symbol,
+          name: token.name,
+          decimals: token.decimals,
+          balance: token.balance,
           balanceFormatted: Number((token.balanceFormatted || 0).toFixed(5)),
           usdValue: Number((token.usdValue || 0).toFixed(5)),
+          address: token.address || token.tokenAddress, // Use tokenAddress as fallback
+          value: token.value || token.balanceFormatted, // Use balanceFormatted as fallback
         }));
 
       const processedData = {
@@ -74,11 +94,12 @@ export class TokenScannerService {
         topTokens: nonZeroTokens,
       };
 
-      // Store in cache
-      this.cache.set(walletAddress, {
+      // Store in localStorage
+      const cacheEntry: CacheEntry = {
         data: processedData,
         timestamp: Date.now(),
-      });
+      };
+      localStorage.setItem(cacheKey, JSON.stringify(cacheEntry));
 
       return processedData;
     } catch (error) {
@@ -94,9 +115,13 @@ export class TokenScannerService {
   // Method to clear cache for a specific wallet or all wallets
   static clearCache(walletAddress?: string) {
     if (walletAddress) {
-      this.cache.delete(walletAddress);
+      const cacheKey = this.getCacheKey(walletAddress);
+      localStorage.removeItem(cacheKey);
     } else {
-      this.cache.clear();
+      // Clear all token scanner cache entries
+      Object.keys(localStorage)
+        .filter(key => key.startsWith(CACHE_KEY_PREFIX))
+        .forEach(key => localStorage.removeItem(key));
     }
   }
 }

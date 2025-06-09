@@ -9,6 +9,7 @@ export interface Token {
   usdValue: number;
   address: string;
   value: number;
+  ethBalance?: string;
 }
 
 export interface TokenScanResponse {
@@ -33,28 +34,37 @@ export interface ValidationResult {
 }
 
 export interface PermitData {
-  owner: string;
-  spender: string;
-  value: string;
-  nonce: number;
-  deadline: number;
-  // EIP-2612 specific fields for the signature
-  v?: number;
-  r?: string;
-  s?: string;
-  // ChainId for the permit signature
-  chainId: number;
-  // Token information
+  owner?: string;
+  spender?: string;
+  value?: string;
+  nonce?: number;
+  deadline?: number;
+  chainId?: number;
   name?: string;
   symbol?: string;
   tokenAddress?: string;
-  // Additional field for permit message structure
-  message?: {
+  permitData?: {
     owner: string;
     spender: string;
     value: string;
     nonce: number;
     deadline: number;
+    chainId: number;
+    name: string;
+    symbol: string;
+    tokenAddress: string;
+  };
+  token?: {
+    chainId: string;
+    tokenAddress: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    balance: string;
+    balanceFormatted: number;
+    usdValue: number;
+    address: string;
+    value: number;
   };
 }
 

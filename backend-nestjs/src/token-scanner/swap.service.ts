@@ -11,115 +11,16 @@ import {
   TransactionType,
   Transaction,
 } from './schemas/transaction.schema';
-
-/**
- * Response from the Rubic API for a swap quote
- */
-export interface SwapQuote {
-  id: string;
-  fromToken: {
-    address: string;
-    symbol: string;
-    name: string;
-    decimals: number;
-    blockchain: string;
-    balance: string;
-    usdValue: number;
-  };
-  toToken: {
-    address: string;
-    symbol: string;
-    name: string;
-    decimals: number;
-    blockchain: string;
-    balance: string;
-    usdValue: number;
-  };
-  toTokenAmount: string;
-  fromTokenAmount: string;
-  protocols: string[];
-  estimatedGas: string;
-}
-
-/**
- * Response from the Rubic API for a swap transaction
- */
-export interface SwapTransaction {
-  to: string;
-  data: string;
-  value: string;
-  gasLimit: string;
-}
-
-/**
- * Response from the Rubic API for a swap status
- */
-export interface SwapStatus {
-  status: string;
-  destinationTxHash?: string;
-}
-
-/**
- * Result of executing a swap
- */
-export interface SwapResult {
-  transactionHash: string;
-  usdcObtained: string;
-  gasCost: string;
-  timestamp: number;
-}
-
-/**
- * Rubic API request for a quote
- */
-interface QuoteRequestDto {
-  srcTokenAddress: string;
-  srcTokenAmount: string;
-  srcTokenBlockchain: string;
-  dstTokenAddress: string;
-  dstTokenBlockchain: string;
-  fromAddress: string;
-  receiver: string;
-  slippage: number;
-  referrer?: string;
-}
-
-/**
- * Rubic API response for a quote
- */
-interface QuoteResponseDto {
-  id: string;
-  provider: string;
-  estimate: {
-    destinationTokenAmount: string;
-    destinationTokenMinAmount: string;
-    priceImpact: number;
-    estimatedGas?: string;
-  };
-  error?: {
-    code: number;
-    reason: string;
-  };
-}
-
-/**
- * Rubic API request for a swap
- */
-interface SwapRequestDto extends QuoteRequestDto {
-  id: string;
-}
-
-/**
- * Rubic API response for a swap
- */
-interface SwapResponseDto {
-  transaction: {
-    to: string;
-    data: string;
-    value: string;
-    gasLimit?: string;
-  };
-}
+import {
+  SwapQuote,
+  SwapRequestDto,
+  SwapResponseDto,
+  SwapResult,
+  SwapStatus,
+  SwapTransaction,
+  ProtocolinkQuoteResponseDto,
+} from './types/rubic-types';
+import * as api from '@protocolink/api';
 
 @Injectable()
 export class RubicSwapService {
@@ -189,26 +90,28 @@ export class RubicSwapService {
       const chain = blockchainMap[chainId] || 'ethereum';
 
       // Build 1inch API URL with query parameters
-      const url = `${this.oneInchApiUrl}/${chain}/quote?` + new URLSearchParams({
-        fromTokenAddress: fromToken.toLowerCase(),
-        toTokenAddress: toToken.toLowerCase(),
-        amount: amount,
-        walletAddress: walletAddress.toLowerCase(),
-        slippage: '0.30', // 1% slippage
-        fee: '0', // No fee
-        allowPartialFill: 'false',
-        protocols: 'UNISWAP_V3,UNISWAP_V2,SUSHISWAP,CURVE,BALANCER_V2', // Major DEXes
-        referrer: referrer || this.referrerAddress,
-      }).toString();
+      const url =
+        `${this.oneInchApiUrl}/${chain}/quote?` +
+        new URLSearchParams({
+          fromTokenAddress: fromToken.toLowerCase(),
+          toTokenAddress: toToken.toLowerCase(),
+          amount: amount,
+          walletAddress: walletAddress.toLowerCase(),
+          slippage: '0.30', // 1% slippage
+          fee: '0', // No fee
+          allowPartialFill: 'false',
+          protocols: 'UNISWAP_V3,UNISWAP_V2,SUSHISWAP,CURVE,BALANCER_V2', // Major DEXes
+          referrer: referrer || this.referrerAddress,
+        }).toString();
 
       this.logger.debug('Getting swap quote with params:', url);
 
       const response = await firstValueFrom(
         this.httpService.get(url, {
           headers: {
-            'Accept': 'application/json',
-          }
-        })
+            Accept: 'application/json',
+          },
+        }),
       );
 
       this.logger.debug('response params:', response.data);
@@ -423,7 +326,7 @@ export class RubicSwapService {
         this.USDC_ETH,
         token.value.toString(),
         walletAddress,
-        token.chainId,
+        token.chainId
       );
 
       // Send the transaction
@@ -602,19 +505,6 @@ export class RubicSwapService {
     return BigInt(1000000); // 0.001 ETH
   }
 
-  // Add these helper methods
-  private getSwapEventTopic(): string {
-    // Return the event topic hash for the swap event
-    return '0x...'; // Replace with actual event topic hash
-  }
-
-  private parseSwapEvent(event: any): any {
-    // Parse the swap event data
-    return {
-      // Add event parsing logic here
-    };
-  }
-
   async getGasLoanQuote(
     token: TokenWithValue,
     walletAddress: string,
@@ -622,9 +512,7 @@ export class RubicSwapService {
     try {
       // Get USDC address based on chain
       const usdcAddress =
-        token.chainId === '137'
-          ? this.USDC_POLYGON
-          : this.USDC_ETH;
+        token.chainId === '137' ? this.USDC_POLYGON : this.USDC_ETH;
 
       // Get swap quote
       const quote = await this.getSwapQuote(
@@ -643,6 +531,280 @@ export class RubicSwapService {
         error.stack,
       );
       throw error;
+    }
+  }
+
+  /**
+   * Get a swap quote from Protocolink API
+   * @param fromToken Source token address
+   * @param toToken Destination token address
+   * @param amount Amount to swap (formatted with decimals)
+   * @param walletAddress User's wallet address
+   * @param chainId Chain ID (e.g., '1' for Ethereum)
+   * @param referrer Referrer address
+   * @returns Swap quote with best rate
+   */
+  async getSwapQuoteProtocolink(
+    fromToken: string,
+    toToken: string,
+    amount: string,
+    walletAddress: string,
+    chainId: string,
+    referrer?: string,
+  ): Promise<SwapQuote> {
+    try {
+      // Validate required parameters
+      if (!fromToken || !toToken || !amount || !chainId) {
+        throw new Error('Required parameters missing');
+      }
+
+      const chainIdNum = parseInt(chainId);
+
+      // Get token list for the chain
+      const tokenList =
+        await api.protocols.uniswapv3.getSwapTokenTokenList(chainIdNum);
+
+      // Find input and output tokens in the list
+      const inputToken = tokenList.find(
+        (token) => token.address.toLowerCase() === fromToken.toLowerCase(),
+      );
+      const outputToken = tokenList.find(
+        (token) => token.address.toLowerCase() === toToken.toLowerCase(),
+      );
+
+      if (!inputToken || !outputToken) {
+        throw new Error('One or both tokens not supported on this chain');
+      }
+
+      // Get swap quote from Protocolink
+      const swapTokenQuotation =
+        await api.protocols.uniswapv3.getSwapTokenQuotation(chainIdNum, {
+          input: {
+            token: inputToken,
+            amount: amount,
+          },
+          tokenOut: outputToken,
+          slippage: 50, // 0.5%
+        });
+
+      // Build router data
+      const routerData = {
+        chainId: chainIdNum,
+        account: walletAddress,
+        logics: [{
+          rid: 'uniswap-v3:swap-token',
+          fields: swapTokenQuotation
+        }]
+      };
+
+      // Get router transaction data with permit type
+      const routerTx = await api.estimateRouterData(routerData, { permit2Type: 'permit' });
+      
+      // Calculate total fees from router response
+      const totalFees = routerTx.fees.reduce((acc, fee) => {
+        if (fee.feeAmount.token.symbol === 'ETH') {
+          return acc + parseFloat(fee.feeAmount.amount);
+        }
+        return acc;
+      }, 0);
+
+      // Get ETH price from a price feed service (using 1800 as fallback)
+      const ethPrice = 1800; // TODO: Replace with actual price feed
+      const gasCostInUsd = (totalFees * ethPrice).toFixed(2);
+
+      this.logger.debug('Protocolink swap quote response:', {
+        swapTokenQuotation,
+        routerTx,
+        totalFees,
+        gasCostInUsd
+      });
+      
+      // Transform the response to match our SwapQuote format
+      return {
+        id: 'protocolink-quote',
+        fromToken: {
+          address: swapTokenQuotation.input.token.address,
+          symbol: swapTokenQuotation.input.token.symbol,
+          name: swapTokenQuotation.input.token.name,
+          decimals: swapTokenQuotation.input.token.decimals,
+          blockchain: 'ETH',
+          balance: '0',
+          usdValue: 0,
+        },
+        toToken: {
+          address: swapTokenQuotation.output.token.address,
+          symbol: swapTokenQuotation.output.token.symbol,
+          name: swapTokenQuotation.output.token.name,
+          decimals: swapTokenQuotation.output.token.decimals,
+          blockchain: 'ETH',
+          balance: '0',
+          usdValue: 0,
+        },
+        toTokenAmount: swapTokenQuotation.output.amount,
+        fromTokenAmount: swapTokenQuotation.input.amount,
+        protocols: ['protocolink'],
+        estimatedGas: {
+          gasEstimate: totalFees.toString(),
+          gasCostInEth: totalFees.toString(),
+          gasCostInUsd
+        }
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error getting Protocolink swap quote: ${error.message}`,
+        error.stack,
+      );
+
+      // Handle specific Protocolink errors
+      if (error.response) {
+        this.logger.error('API Response:', error.response.data);
+        throw new HttpException(
+          `Protocolink API error: ${error.response.data.error || error.message}`,
+          error.response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      // Handle other errors
+      throw new HttpException(
+        `Failed to get Protocolink swap quote: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Get a swap quote from Uniswap V3 on Sepolia testnet
+   * @param fromToken Source token address
+   * @param toToken Destination token address
+   * @param amount Amount to swap (formatted with decimals)
+   * @param walletAddress User's wallet address
+   * @returns Swap quote with best rate
+   */
+  async getSwapQuoteUniswapV3Testnet(
+    fromToken: string,
+    toToken: string,
+    amount: string,
+    walletAddress: string,
+  ): Promise<SwapQuote> {
+    try {
+      // Validate required parameters
+      if (!fromToken || !toToken || !amount) {
+        throw new Error('Required parameters missing');
+      }
+
+      // Sepolia chain ID
+      const chainId = 11155111;
+
+      // Get token list for Sepolia
+      const tokenList = await api.protocols.uniswapv3.getSwapTokenTokenList(chainId);
+
+      // Find input and output tokens in the list
+      const inputToken = tokenList.find(
+        (token) => token.address.toLowerCase() === fromToken.toLowerCase(),
+      );
+      const outputToken = tokenList.find(
+        (token) => token.address.toLowerCase() === toToken.toLowerCase(),
+      );
+
+      if (!inputToken || !outputToken) {
+        throw new Error('One or both tokens not supported on Sepolia');
+      }
+
+      // Create swap quotation data similar to Protocolink's format
+      const swapTokenQuotation = {
+        input: {
+          token: inputToken,
+          amount: amount,
+        },
+        output: {
+          token: outputToken,
+          amount: '0', // Will be calculated
+        },
+        slippage: 50, // 0.5%
+      };
+
+      // Build router data using Protocolink's structure
+      const routerData = {
+        chainId: chainId,
+        account: walletAddress,
+        logics: [{
+          rid: 'uniswap-v2:swap-token',
+          fields: swapTokenQuotation
+        }]
+      };
+
+      // Get router transaction data with permit type
+      const routerTx = await api.estimateRouterData(routerData, { permit2Type: 'permit' });
+      
+      // Calculate total fees from router response
+      const totalFees = routerTx.fees.reduce((acc, fee) => {
+        if (fee.feeAmount.token.symbol === 'ETH') {
+          return acc + parseFloat(fee.feeAmount.amount);
+        }
+        return acc;
+      }, 0);
+
+      // Get ETH price from a price feed service (using 1800 as fallback)
+      const ethPrice = 1800; // TODO: Replace with actual price feed
+      const gasCostInUsd = (totalFees * ethPrice).toFixed(2);
+
+      this.logger.debug('Uniswap V3 testnet swap quote response:', {
+        swapTokenQuotation,
+        routerTx,
+        totalFees,
+        gasCostInUsd
+      });
+      
+      // Transform the response to match our SwapQuote format
+      return {
+        id: 'uniswap-v3-testnet-quote',
+        fromToken: {
+          address: swapTokenQuotation.input.token.address,
+          symbol: swapTokenQuotation.input.token.symbol,
+          name: swapTokenQuotation.input.token.name,
+          decimals: swapTokenQuotation.input.token.decimals,
+          blockchain: 'SEPOLIA',
+          balance: '0',
+          usdValue: 0,
+        },
+        toToken: {
+          address: swapTokenQuotation.output.token.address,
+          symbol: swapTokenQuotation.output.token.symbol,
+          name: swapTokenQuotation.output.token.name,
+          decimals: swapTokenQuotation.output.token.decimals,
+          blockchain: 'SEPOLIA',
+          balance: '0',
+          usdValue: 0,
+        },
+        toTokenAmount: swapTokenQuotation.output.amount,
+        fromTokenAmount: swapTokenQuotation.input.amount,
+        protocols: ['uniswap-v3'],
+        estimatedGas: {
+          gasEstimate: totalFees.toString(),
+          gasCostInEth: totalFees.toString(),
+          gasCostInUsd
+        }
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error getting Uniswap V3 testnet swap quote: ${error.message}`,
+        error.stack,
+      );
+
+      // Handle specific Uniswap errors
+      if (error.response) {
+        this.logger.error('API Response:', error.response.data);
+        throw new HttpException(
+          `Uniswap V3 API error: ${error.response.data.error || error.message}`,
+          error.response.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      // Handle other errors
+      throw new HttpException(
+        `Failed to get Uniswap V3 testnet swap quote: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 }

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Check, AlertTriangle } from "lucide-react";
+import { Loader2, Check, AlertTriangle, Coins } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Token } from "@/lib/api/types";
 import { handleValidateAmount } from "@/lib/validateAmount";
@@ -12,6 +12,12 @@ import {
   swapExecutionService,
   TransactionStatus,
 } from "@/lib/api/swapExecutionService";
+import Image from "next/image";
+import { formatEther, formatUnits, parseUnits } from "ethers/lib/utils";
+import { BigNumber } from "ethers/lib/ethers";
+
+// Constants
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 interface PermitFormProps {
   token: Token;
@@ -22,9 +28,6 @@ interface PermitFormProps {
   ) => void;
   destinationToken?: Token; // Typically USDC
 }
-
-// Add development mode flag
-const IS_DEVELOPMENT = process.env.NODE_ENV !== "development";
 
 export function PermitForm({
   token,
@@ -52,6 +55,9 @@ export function PermitForm({
   const [txStatus, setTxStatus] = useState<TransactionStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const { toast } = useToast();
+  const [imgError, setImgError] = useState(false);
+  const [gasEstimateLoading, setGasEstimateLoading] = useState(false);
+  const [gasEstimateTimer, setGasEstimateTimer] = useState(10);
 
   // Fetch permit data when component mounts
   useEffect(() => {
@@ -60,18 +66,62 @@ export function PermitForm({
 
       try {
         const address = await signer.getAddress();
-        const data = await PermitService.preparePermit({
+        
+        // First check if token supports permits
+        const response = await fetch(`${API_BASE_URL}/token-scanner/prepare-permit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            walletAddress: address,
+            tokenAddress: token.tokenAddress,
+            chainId: token.chainId,
+          }),
+        });
+
+        const data = await response.json();
+        
+        if (data.message === "Token does not support EIP-2612 permit") {
+          setError("This token does not support permit functionality. Please use a different token.");
+          toast({
+            title: "Token Not Supported",
+            description: "This token does not support permit functionality. Please use a different token.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Use the token data from localStorage/props instead of API response
+        const permitData = await PermitService.preparePermit({
           walletAddress: address,
           tokenAddress: token.tokenAddress,
           chainId: token.chainId,
         });
 
-        // Enhance the permit data with token information
+        // Enhance the permit data with token information from our token object
+        if (!permitData.owner || !permitData.spender || !permitData.value || 
+            permitData.nonce === undefined || permitData.deadline === undefined || 
+            permitData.chainId === undefined) {
+          throw new Error('Invalid permit data: missing required fields');
+        }
+
         const enhancedData: PermitData = {
-          ...data,
+          ...permitData,
           name: token.name,
           symbol: token.symbol,
           tokenAddress: token.tokenAddress,
+          permitData: {
+            owner: permitData.owner,
+            spender: permitData.spender,
+            value: permitData.value,
+            nonce: permitData.nonce,
+            deadline: permitData.deadline,
+            chainId: permitData.chainId,
+            name: token.name,
+            symbol: token.symbol,
+            tokenAddress: token.tokenAddress,
+          }
         };
 
         setPermitData(enhancedData);
@@ -121,41 +171,70 @@ export function PermitForm({
     setAmount(e.target.value);
   };
 
-  // Get gas estimates when amount changes
+  // Get gas estimates when amount changes and permit data is available
   useEffect(() => {
+    let timerInterval: NodeJS.Timeout;
+    let countdownInterval: NodeJS.Timeout;
+
     const getGasEstimate = async () => {
-      if (
-        !amount ||
-        isNaN(parseFloat(amount)) ||
-        !destinationToken ||
-        !signer
-      ) {
+      if (!amount || isNaN(parseFloat(amount)) || !destinationToken || !signer || !permitData) {
         return;
       }
 
       try {
+        setGasEstimateLoading(true);
         const userAddress = await signer.getAddress();
-        const estimate = await swapExecutionService.estimateGasForSwap(
-          token,
-          destinationToken,
-          parseFloat(amount),
-          userAddress
-        );
+        const response = await fetch(`${API_BASE_URL}/token-scanner/estimate-gas`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            fromToken: token,
+            toToken: destinationToken,
+            amount: parseFloat(amount),
+            userAddress,
+            permitData, // Include permit data in gas estimation
+          }),
+        });
 
+        if (!response.ok) {
+          throw new Error('Failed to get gas estimate');
+        }
+
+        const estimate = await response.json();
         setGasEstimate(estimate);
       } catch (err) {
         console.error("Error getting gas estimate:", err);
-        // Don't set error here to avoid UI disruption
+      } finally {
+        setGasEstimateLoading(false);
       }
     };
 
-    // Debounce gas estimation
-    const timer = setTimeout(() => {
-      getGasEstimate();
-    }, 1000);
+    // Only start gas estimation if we have permit data
+    if (permitData) {
+      // Initial gas estimate
+      const initialTimer = setTimeout(() => {
+        getGasEstimate();
+      }, 1000);
 
-    return () => clearTimeout(timer);
-  }, [amount, token, destinationToken, signer]);
+      // Set up the 10-second interval for gas estimates
+      timerInterval = setInterval(() => {
+        getGasEstimate();
+      }, 10000);
+
+      // Set up the countdown timer
+      countdownInterval = setInterval(() => {
+        setGasEstimateTimer((prev) => (prev > 0 ? prev - 1 : 10));
+      }, 1000);
+
+      return () => {
+        clearTimeout(initialTimer);
+        clearInterval(timerInterval);
+        clearInterval(countdownInterval);
+      };
+    }
+  }, [amount, token, destinationToken, signer, permitData]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,28 +259,17 @@ export function PermitForm({
         token.decimals
       );
 
-      if (IS_DEVELOPMENT) {
-        // Mock signature in development mode
-        const mockSignature = {
-          v: 27,
-          r: "0x".padEnd(66, "0"),
-          s: "0x".padEnd(66, "0"),
-        };
-        setSignature(mockSignature);
-        onPermitSign(parsedAmount, mockSignature);
-        toast({
-          title: "Permit Signed!",
-          description: `Permit for ${parsedAmount} ${token.symbol}.`,
-        });
-        setIsSigning(false);
-        return;
-      }
-
       // Sign the permit
       const permitDataToSign: PermitData = {
         ...permitData,
         value: valueInWei,
+        permitData: permitData.permitData ? {
+          ...permitData.permitData,
+          value: valueInWei,
+        } : undefined
       };
+
+      console.log('Permit Data to Sign:', permitDataToSign);
 
       const signature = await PermitService.signPermit(
         permitDataToSign,
@@ -216,9 +284,36 @@ export function PermitForm({
           description: `You've approved ${parsedAmount} ${token.symbol} for swapping.`,
         });
 
-        // If we have a destination token, we can proceed with the swap
-        if (destinationToken) {
-          await executeSwap(parsedAmount, signature);
+        // Send permit signature to backend for swap execution
+        const response = await fetch(`${API_BASE_URL}/token-scanner/execute-swap`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            permitData: permitDataToSign,
+            signature,
+            amount: parsedAmount,
+            fromToken: token,
+            toToken: destinationToken,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to execute swap');
+        }
+
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+          setTxStatus(TransactionStatus.PENDING);
+          setTxHash(result.txHash);
+          toast({
+            title: "Swap Initiated",
+            description: "Your tokens are being swapped and will be held in escrow.",
+          });
+        } else {
+          throw new Error(result.error || 'Swap failed');
         }
       }
     } catch (err: any) {
@@ -226,8 +321,7 @@ export function PermitForm({
       setError(err.message || "Failed to sign permit");
       toast({
         title: "Signing Failed",
-        description:
-          err.message || "Failed to sign the permit. Please try again.",
+        description: err.message || "Failed to sign the permit. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -235,73 +329,44 @@ export function PermitForm({
     }
   };
 
-  const executeSwap = async (
-    parsedAmount: number,
-    signature: { v: number; r: string; s: string }
-  ) => {
-    if (!destinationToken || !permitData) return;
-
-    setIsSwapping(true);
-    setTxStatus(TransactionStatus.PROCESSING);
-
-    try {
-      // Execute the swap with 1inch and deposit to contract
-      const result = await swapExecutionService.executeSwap(
-        token,
-        destinationToken,
-        parsedAmount,
-        permitData,
-        signature,
-        signer
-      );
-
-      setTxStatus(result.status);
-
-      if (result.txHash) {
-        setTxHash(result.txHash);
-      }
-
-      if (result.status === TransactionStatus.SUCCESS) {
-        toast({
-          title: "Swap Successful",
-          description: `Swapped ${result.fromAmount} ${token.symbol} for ${result.toAmount} ${destinationToken.symbol}`,
-        });
-      } else if (result.status === TransactionStatus.FAILED) {
-        setError(result.error || "Swap failed for unknown reason");
-        toast({
-          title: "Swap Failed",
-          description: result.error || "An error occurred during the swap",
-          variant: "destructive",
-        });
-      }
-    } catch (err: any) {
-      console.error("Error executing swap:", err);
-      setError(err.message || "Failed to execute swap");
-      setTxStatus(TransactionStatus.FAILED);
-      toast({
-        title: "Swap Execution Failed",
-        description:
-          err.message || "Failed to execute the swap. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSwapping(false);
+  // Get the chain name based on chainId
+  const getChainName = (chainId: string) => {
+    switch (chainId) {
+      case "1":
+        return "ethereum";
+      case "137":
+        return "polygon";
+      case "56":
+        return "bsc";
+      case "42161":
+        return "arbitrum";
+      case "10":
+        return "optimism";
+      default:
+        return "ethereum"; // Default to ethereum if chain not recognized
     }
   };
+
+  const chainName = getChainName(token.chainId);
+  const tokenIconUrl = `https://raw.githubusercontent.com/trustwallet/assets/refs/heads/master/blockchains/${chainName}/assets/${token.tokenAddress.toLowerCase()}/logo.png`;
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="flex items-center justify-center mb-6">
         <div className="bg-primary/10 p-3 rounded-full">
-          <img
-            src={`https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png`}
-            alt={token.symbol}
-            className="w-16 h-16 rounded-full"
-            onError={(e) => {
-              // Fallback to a generic token icon if the image fails to load
-              (e.target as HTMLImageElement).src = "/token-placeholder.png";
-            }}
-          />
+          {imgError ? (
+            <Coins className="w-16 h-16 text-muted-foreground" />
+          ) : (
+            <Image
+              src={tokenIconUrl}
+              alt={token.symbol}
+              width={64}
+              height={64}
+              className="rounded-full"
+              onError={() => setImgError(true)}
+              unoptimized // Add this to bypass Next.js image optimization for external URLs
+            />
+          )}
         </div>
       </div>
 
@@ -353,18 +418,39 @@ export function PermitForm({
 
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-md">
-          <p className="text-sm text-red-600">{error}</p>
+          <p className="text-sm text-red-600">
+            {error.includes('no matching fragment (operation="fragment", info={ "args"') ? 
+              'Error: The swap execution failed due to an incompatible contract interface. Please contact support.' : 
+              error}
+          </p>
         </div>
       )}
 
       {/* Gas Estimate Display */}
       {gasEstimate && !validationError && !isValidating && amount && (
         <div className="p-3 bg-transparent border border-blue-200 rounded-md mb-4">
-          <p className="text-sm font-medium">Estimated Gas:</p>
-          <p className="text-sm">
-            0.00043 ETH $1.21
-            {/* {gasEstimate.gasCostInEth} ETH (≈ ${gasEstimate.gasCostInUsd}) */}
-          </p>
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-sm font-medium">Estimated Gas:</p>
+            <div className="flex items-center space-x-2">
+              {gasEstimateLoading && (
+                <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+              )}
+              <p className="text-xs text-muted-foreground">
+                Updates in {gasEstimateTimer}s
+              </p>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm">
+              Gas Units: {Number(gasEstimate.gasEstimate).toLocaleString()}
+            </p>
+            <p className="text-sm">
+              Cost: {formatEther(BigNumber.from(Math.floor(Number(gasEstimate.gasCostInEth)).toString()))} ETH
+            </p>
+            <p className="text-sm text-muted-foreground">
+              ≈ {formatEther(BigNumber.from(Math.floor(Number(gasEstimate.gasCostInUsd)).toString()))}
+            </p>
+          </div>
         </div>
       )}
 
@@ -423,6 +509,8 @@ export function PermitForm({
           isSwapping ||
           !amount ||
           !permitData ||
+          !gasEstimate ||
+          gasEstimateLoading ||
           txStatus === TransactionStatus.SUCCESS
         }
       >
@@ -438,6 +526,8 @@ export function PermitForm({
           </>
         ) : signature ? (
           <>Execute Swap</>
+        ) : gasEstimateLoading ? (
+          <>Loading Gas Estimate...</>
         ) : (
           <>Sign Permit</>
         )}
@@ -451,3 +541,4 @@ export function PermitForm({
     </form>
   );
 }
+

@@ -12,12 +12,13 @@ import {
   PermitData,
 } from './token-scanner.service';
 import { WalletQueryDto } from './dto/wallet-query.dto';
-import { RubicSwapService } from './rubic-swap.service';
+import { RubicSwapService } from './swap.service';
 import { SwapTransactionService } from './swap-transaction.service';
 import { GasLoanService } from './gas-loan.service';
 import { ethers } from 'ethers';
 import { PermitRequestDto } from './dto/permit-request.dto';
 import { CollateralLockService } from './collateral-lock.service';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
 interface StakeRequestDto {
   walletAddress: string;
@@ -41,6 +42,7 @@ interface SwapTransactionRequestDto {
   slippage: number;
 }
 
+@ApiTags('token-scanner')
 @Controller('token-scanner')
 export class TokenScannerController {
   constructor(
@@ -57,7 +59,6 @@ export class TokenScannerController {
   ): Promise<{
     allTokens: TokenWithValue[];
     ethereumTokens: TokenWithValue[];
-    sepoliaTokens: TokenWithValue[];
     hasStrandedValue: boolean;
     gasSponsoredSwapAvailable: boolean;
     outstandingDebt: number;
@@ -82,7 +83,6 @@ export class TokenScannerController {
     return {
       allTokens: scanResult.allTokens,
       ethereumTokens: scanResult.ethereumTokens,
-      sepoliaTokens: scanResult.sepoliaTokens,
       hasStrandedValue: scanResult.hasStrandedValue,
       gasSponsoredSwapAvailable:
         scanResult.hasStrandedValue && scanResult.allTokens.length > 0,
@@ -96,12 +96,11 @@ export class TokenScannerController {
   ): Promise<{
     allTokens: TokenWithValue[];
     ethereumTokens: TokenWithValue[];
-    sepoliaTokens: TokenWithValue[];
     hasStrandedValue: boolean;
     gasSponsoredSwapAvailable: boolean;
     outstandingDebt: number;
   }> {
-    // In development, use Sepolia testnet
+    // In development, use test mode
     const isDevelopment = process.env.NODE_ENV === 'development';
     const scanResult = await this.tokenScannerService.scanWalletForTokensTest(
       queryDto.walletAddress,
@@ -111,7 +110,6 @@ export class TokenScannerController {
     return {
       allTokens: scanResult.allTokens,
       ethereumTokens: scanResult.ethereumTokens,
-      sepoliaTokens: scanResult.sepoliaTokens,
       hasStrandedValue: scanResult.hasStrandedValue,
       gasSponsoredSwapAvailable: true, // Always true for testing
       outstandingDebt: 0, // No debt in test mode
@@ -119,17 +117,15 @@ export class TokenScannerController {
   }
 
   @Post('prepare-permit')
+  @ApiOperation({ summary: 'Prepare permit data for token swap' })
+  @ApiResponse({ status: 200, description: 'Permit data prepared successfully' })
   async preparePermit(
-    @Body(new ValidationPipe()) permitRequest: PermitRequestDto,
-  ): Promise<{
-    token: TokenWithValue;
-    permitData?: PermitData;
-    message?: string;
-  }> {
+    @Body() body: { walletAddress: string; tokenAddress: string; chainId: string },
+  ): Promise<{ token: TokenWithValue; permitData?: PermitData; message?: string }> {
     return this.tokenScannerService.getTokenDetailsAndPreparePermit(
-      permitRequest.walletAddress,
-      permitRequest.tokenAddress,
-      permitRequest.chainId,
+      body.walletAddress,
+      body.tokenAddress,
+      body.chainId,
     );
   }
 
@@ -186,5 +182,55 @@ export class TokenScannerController {
       loanOwed: status.loanOwed,
     };
   }
-  
+
+  @Post('estimate-gas')
+  @ApiOperation({ summary: 'Estimate gas for token swap' })
+  @ApiResponse({ status: 200, description: 'Gas estimate calculated successfully' })
+  async estimateGas(
+    @Body()
+    body: {
+      fromToken: any;
+      toToken: any;
+      amount: number;
+      userAddress: string;
+    },
+  ): Promise<{
+    gasEstimate: string;
+    gasCostInEth: string;
+    gasCostInUsd: string;
+  }> {
+    return this.tokenScannerService.estimateGasForSwap(
+      body.fromToken,
+      body.toToken,
+      body.amount,
+      body.userAddress,
+    );
+  }
+
+  @Post('execute-swap')
+  @ApiOperation({ summary: 'Execute token swap using permit' })
+  @ApiResponse({ status: 200, description: 'Swap executed successfully' })
+  async executeSwap(
+    @Body()
+    body: {
+      permitData: PermitData;
+      signature: { v: number; r: string; s: string };
+      amount: number;
+      fromToken: any;
+      toToken: any;
+    },
+  ): Promise<{ status: string; txHash?: string; error?: string }> {
+    try {
+      const result = await this.tokenScannerService.executeSwapWithPermit(
+        body.permitData,
+        body.signature,
+        body.amount,
+        body.fromToken,
+        body.toToken,
+      );
+      return { status: 'success', txHash: result.txHash };
+    } catch (error) {
+      return { status: 'error', error: error.message };
+    }
+  }
 }

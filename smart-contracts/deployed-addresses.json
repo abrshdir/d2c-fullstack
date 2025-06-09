@@ -1,0 +1,8 @@
+{
+  "protocolinkSwapExecutor": "0x15F2ea83eB97ede71d84Bd04fFF29444f6b7cd52",
+  "escrow": "0x0B32a3F8f5b7E5d315b9E52E640a49A89d89c820",
+  "collateralLock": "0xF357118EBd576f3C812c7875B1A1651a7f140E9C",
+  "treasury": "0x519b05b3655F4b89731B677d64CEcf761f4076f6",
+  "network": "localhost",
+  "timestamp": "2025-06-08T18:31:59.343Z"
+}

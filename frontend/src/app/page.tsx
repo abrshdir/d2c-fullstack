@@ -108,59 +108,13 @@ export default function HomePage() {
         })) as string[];
 
         if (accounts.length > 0) {
-          // Switch to Sepolia network
-          try {
-            await window.ethereum.request({
-              method: 'wallet_switchEthereumChain',
-              params: [{ chainId: '0xaa36a7' }], // Sepolia chainId in hex
-            });
-          } catch (switchError: any) {
-            // This error code indicates that the chain has not been added to MetaMask
-            if (switchError.code === 4902) {
-              try {
-                await window.ethereum.request({
-                  method: 'wallet_addEthereumChain',
-                  params: [{
-                    chainId: '0xaa36a7',
-                    chainName: 'Sepolia',
-                    nativeCurrency: {
-                      name: 'SepoliaETH',
-                      symbol: 'SEP',
-                      decimals: 18
-                    },
-                    rpcUrls: ['https://rpc.sepolia.org'],
-                    blockExplorerUrls: ['https://sepolia.etherscan.io']
-                  }]
-                });
-              } catch (addError) {
-                console.error('Error adding Sepolia network:', addError);
-                toast({
-                  title: "Network Error",
-                  description: "Failed to add Sepolia network to MetaMask.",
-                  variant: "destructive",
-                });
-                setEthConnectLoading(false);
-                return;
-              }
-            } else {
-              console.error('Error switching to Sepolia:', switchError);
-              toast({
-                title: "Network Error",
-                description: "Failed to switch to Sepolia network.",
-                variant: "destructive",
-              });
-              setEthConnectLoading(false);
-              return;
-            }
-          }
-
           // Set the wallet address
           setEthWalletAddress(accounts[0]);
           setIsEthWalletConnected(true);
 
-          // Create an ethers provider and signer
-          const provider = new ethers.BrowserProvider(window.ethereum);
-          const signer = await provider.getSigner();
+          // Create an ethers provider and signer using v5 syntax
+          const provider = new ethers.providers.Web3Provider(window.ethereum);
+          const signer = provider.getSigner();
           setEthSigner(signer);
 
           setCurrentStep(1); // Move to next step immediately
@@ -221,26 +175,27 @@ export default function HomePage() {
     setStakeLoading(true);
     try {
       // Create a destination token (USDC) for the swap
-      const usdcToken: Token = {
-        chainId: selectedToken.chainId,
+      const usdcToken = {
         tokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC mainnet address
+        chainId: selectedToken.chainId,
         symbol: "USDC",
         name: "USD Coin",
         decimals: 6,
         balance: "0",
         balanceFormatted: 0,
-        usdValue: 1 // 1 USDC = $1
-      };
+        usdValue: 1, // 1 USDC = $1
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // Same as tokenAddress
+        value: 0 // Initial value
+      } as Token;
 
-      // Get the permit data from the backend (assuming it's stored in the component state)
-      // In a real implementation, we would need to retrieve this from our backend or local state
+      // Get the permit data from the backend
       const permitData = {
         owner: ethWalletAddress || "",
         spender: "0x7fffBC1fc84F816353684EAc12E9a3344FFEAD29", // Our contract address
         value: permitAmount.toString(),
         nonce: 0, // This would come from the backend
         deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
-        chainId: IS_DEVELOPMENT ? 11155111 : Number(selectedToken.chainId), // Use Sepolia chainId in development
+        chainId: Number(selectedToken.chainId), // Use the actual chain ID from the selected token
         name: selectedToken.name,
         symbol: selectedToken.symbol,
         tokenAddress: selectedToken.tokenAddress

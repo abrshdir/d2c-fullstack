@@ -1,5 +1,8 @@
 
 export interface Token {
+  decimals(arg0: string, decimals: any): unknown;
+  chainId(chainId: any): any;
+  tokenAddress(arg0: number, tokenAddress: any, tokenAddress1: any, arg3: string, fromToken: Token, userAddress: string): unknown;
   id: string;
   name: string;
   symbol: string;

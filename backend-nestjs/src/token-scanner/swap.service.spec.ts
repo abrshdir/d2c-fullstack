@@ -2,14 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HttpModule, HttpService } from '@nestjs/axios';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import {
-  RubicSwapService,
-  SwapQuote,
-  SwapTransaction,
-  SwapStatus,
-} from './rubic-swap.service';
+  RubicSwapService
+} from './swap.service';
 import { of, throwError } from 'rxjs';
 import { TokenWithValue } from './token-scanner.service';
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { SwapQuote } from './types/rubic-types';
 
 describe('RubicSwapService', () => {
   let service: RubicSwapService;
@@ -23,7 +21,9 @@ describe('RubicSwapService', () => {
     decimals: 18,
     balance: '1000000000000000000', // 1 UNI
     balanceFormatted: 1,
-    usdValue: 5, // $5 USD
+    usdValue: 5,
+    address: '',
+    value: 0
   };
 
   const mockQuoteResponse = {
@@ -224,7 +224,11 @@ describe('RubicSwapService', () => {
         toTokenAmount: '5000000',
         fromTokenAmount: '1000000000000000000',
         protocols: ['UNISWAP_V3'],
-        estimatedGas: '150000',
+        estimatedGas: {
+          gasEstimate: '150000',
+          gasCostInEth: '0.003',
+          gasCostInUsd: '6.00'
+        },
       };
 
       // Mock the getSwapQuote method directly

@@ -1,22 +1,10 @@
 import { ethers } from "ethers";
-import { oneInchService } from "./oneInchService";
+import type { Signer } from "ethers";
+import { oneInchService } from "./apiService";
 import { permitVerificationService } from "./permitVerificationService";
 import { PermitData, Token } from "./types";
-import {
-  getContractInstance,
-  getCurrentGasPrice,
-} from "../contracts/contractUtils";
-
-// Extended PermitData interface to include message property
-interface ExtendedPermitData extends PermitData {
-  message: {
-    owner: string;
-    spender: string;
-    value: string;
-    nonce: number;
-    deadline: number;
-  };
-}
+import { getContractInstance } from "../contracts/contractUtils";
+import { formatUnits, parseUnits } from "ethers/lib/utils";
 
 // Transaction status enum
 export enum TransactionStatus {
@@ -52,26 +40,17 @@ class SwapExecutionService {
     amount: number,
     permitData: PermitData,
     signature: { v: number; r: string; s: string },
-    signer: any // Using any type to bypass ethers version conflicts
+    signer: Signer
   ): Promise<SwapResult> {
     try {
-      // Update status to indicate processing
       const result: SwapResult = {
         status: TransactionStatus.PROCESSING,
       };
 
-      // Simulate network delay for transaction preparation
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const amountInWei = parseUnits(amount.toString(), fromToken.decimals);
 
-      // 1. Get swap quote from 1inch
-      const amountInWei = ethers.parseUnits(
-        amount.toString(),
-        fromToken.decimals
-      );
-
-      // Get user address first
       const userAddress = await signer.getAddress();
-      console.log(`Simulating swap for ${userAddress}`);
+      console.log(`Executing swap for ${userAddress}`);
 
       try {
         const quote = await oneInchService.getQuote(
@@ -83,7 +62,6 @@ class SwapExecutionService {
           userAddress
         );
 
-        // 2. Get swap data
         const swapData = await oneInchService.getSwap(
           Number(fromToken.chainId),
           fromToken.tokenAddress,
@@ -92,33 +70,32 @@ class SwapExecutionService {
           userAddress
         );
 
-        // Generate a mock transaction hash
-        const mockTxHash = `0x${Math.random().toString(16).substr(2, 40)}`;
-        result.txHash = mockTxHash;
+        // Execute the swap transaction
+        const tx = await signer.sendTransaction({
+          to: swapData.tx.to,
+          data: swapData.tx.data,
+          value: swapData.tx.value,
+          gasLimit: swapData.tx.gas,
+        });
+
+        result.txHash = tx.hash;
         result.status = TransactionStatus.PENDING;
 
-        // Simulate transaction confirmation delay
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // Wait for transaction confirmation
+        const receipt = await tx.wait();
 
-        // 90% chance of success (for testing both success and failure)
-        const isSuccessful = Math.random() < 0.9;
-
-        if (isSuccessful) {
-          // Simulate successful transaction
+        if (receipt.status === 1) {
           result.status = TransactionStatus.SUCCESS;
           result.fromAmount = amount.toString();
-          result.toAmount = ethers.formatUnits(swapData.toAmount, toToken.decimals);
-          result.gasUsed = "150000";
-
-          console.log(`Mock transaction successful: ${mockTxHash}`);
+          result.toAmount = formatUnits(swapData.toAmount, toToken.decimals);
+          result.gasUsed = receipt.gasUsed.toString();
+          console.log(`Transaction successful: ${tx.hash}`);
         } else {
-          // Simulate failed transaction
           result.status = TransactionStatus.FAILED;
-          result.error = "Transaction failed: insufficient funds or high slippage";
-          console.log(`Mock transaction failed: ${mockTxHash}`);
+          result.error = "Transaction failed";
+          console.log(`Transaction failed: ${tx.hash}`);
         }
       } catch (quoteError: any) {
-        // Handle quote errors specifically
         result.status = TransactionStatus.FAILED;
         result.error = quoteError.message;
         console.log(`Quote error: ${quoteError.message}`);
@@ -135,7 +112,7 @@ class SwapExecutionService {
   }
 
   /**
-   * Get gas estimate for the swap + deposit process - MOCK IMPLEMENTATION
+   * Get gas estimate for the swap + deposit process
    * @param fromToken - Source token
    * @param toToken - Destination token
    * @param amount - Amount to swap
@@ -152,59 +129,84 @@ class SwapExecutionService {
     gasCostInUsd: string;
   }> {
     try {
-      // Simulate network delay
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      const amountInWei = parseUnits(
+        amount.toString(),
+        fromToken.decimals
+      ).toString();
 
-      // Calculate amount in wei (for consistency)
-      const amountInWei = ethers
-        .parseUnits(amount.toString(), fromToken.decimals)
-        .toString();
+      const quote = await oneInchService.getQuote(
+        Number(fromToken.chainId),
+        fromToken.tokenAddress,
+        toToken.tokenAddress,
+        amountInWei,
+        fromToken,
+        userAddress
+      );
 
-      try {
-        // Get quote for gas estimate with complete token information
-        const quote = await oneInchService.getQuote(
-          Number(fromToken.chainId),
-          fromToken.tokenAddress,
-          toToken.tokenAddress,
-          amountInWei,
-          fromToken,
-          userAddress
-        );
+      // Get ETH price from a price feed service
+      const ethPrice = 1800; // TODO: Replace with actual price feed service
+      const gasCostInUsd = (parseFloat(quote.estimatedGas) * ethPrice).toFixed(
+        2
+      );
 
-        // Mock gas price (50 Gwei)
-        const gasPrice = "50000000000";
+      console.log(
+        `Gas estimate for ${userAddress}: ${JSON.stringify(
+          quote.estimatedGas
+        )} gas units`
+      );
 
-        // Calculate gas cost
-        const gasCost = oneInchService.calculateGasCost(
-          quote.estimatedGas,
-          gasPrice
-        );
-
-        // Use fixed ETH price of $1800 for demonstration
-        const ethPrice = 1800;
-        const gasCostInUsd = parseFloat(gasCost) * ethPrice;
-
-        console.log(
-          `Gas estimate mock for ${userAddress}: ${quote.estimatedGas} gas units`
-        );
-
-        return {
-          gasEstimate: quote.estimatedGas,
-          gasCostInEth: gasCost,
-          gasCostInUsd: gasCostInUsd.toFixed(2),
-        };
-      } catch (quoteError: any) {
-        // If we can't get a quote, return a default gas estimate
-        console.warn(`Could not get quote for gas estimate: ${quoteError.message}`);
-        return {
-          gasEstimate: "150000", // Default gas estimate
-          gasCostInEth: "0.0075", // Default gas cost in ETH
-          gasCostInUsd: "13.50", // Default gas cost in USD
-        };
-      }
-    } catch (error) {
+      return {
+        gasEstimate: (quote.estimatedGas as any).gasEstimate,
+        gasCostInEth: (quote.estimatedGas as any).gasCostInEth, // Using the router's gas estimate
+        gasCostInUsd: (quote.estimatedGas as any).gasCostInUsd, // Fallback to calculated USD cost
+      };
+    } catch (error: any) {
       console.error("Error estimating gas:", error);
-      throw error;
+      throw new Error(`Failed to estimate gas: ${error.message}`);
+    }
+  }
+
+  /**
+   * Lock collateral in the escrow contract
+   * @param token - Token to lock
+   * @param amount - Amount to lock
+   * @param permitData - Permit data
+   * @param signature - Permit signature
+   * @param signer - Ethers signer
+   */
+  async lockCollateral(
+    token: Token,
+    amount: number,
+    permitData: PermitData,
+    signature: { v: number; r: string; s: string },
+    signer: Signer
+  ): Promise<{ success: boolean; txHash?: string }> {
+    try {
+      const contract = await getContractInstance(signer.provider!);
+
+      const amountInWei = parseUnits(
+        amount.toString(),
+        token.decimals
+      ).toString();
+
+      const tx = await contract.lockCollateral(
+        token.tokenAddress,
+        amountInWei,
+        permitData,
+        signature
+      );
+
+      const receipt = await tx.wait();
+
+      return {
+        success: true,
+        txHash: receipt.hash,
+      };
+    } catch (error: any) {
+      console.error("Error locking collateral:", error);
+      return {
+        success: false,
+      };
     }
   }
 }

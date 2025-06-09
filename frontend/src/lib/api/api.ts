@@ -141,17 +141,15 @@ export async function initiateGasLoanSwap(request: GasLoanRequest): Promise<GasL
   });
 }
 
-export async function getStakingStatus(loanId: string): Promise<StakingStatus> {
-  const cacheKey = getCacheKey(`/staking/status/${loanId}`);
-  const cached = getCachedData<StakingStatus>(cacheKey);
-  
-  if (cached) {
-    return cached;
-  }
-
-  const data = await fetchWithRetry<StakingStatus>(`/staking/status/${loanId}`);
-  setCachedData(cacheKey, data);
-  return data;
+export async function getStakingStatus(address: string): Promise<StakingStatus> {
+  // TODO: Replace with actual API call
+  return {
+    totalStaked: "1000 SUI",
+    rewards: "50 SUI",
+    validatorAddress: "0x123...abc",
+    startDate: "2024-01-01",
+    isActive: true,
+  };
 }
 
 export async function initiateWithdrawal(request: WithdrawRequest): Promise<WithdrawResponse> {
@@ -161,22 +159,24 @@ export async function initiateWithdrawal(request: WithdrawRequest): Promise<With
   });
 }
 
-export async function getTransactionHistory(
-  page: number = 1,
-  limit: number = 10
-): Promise<TransactionHistory> {
-  const cacheKey = getCacheKey('/transactions/history', { page, limit });
-  const cached = getCachedData<TransactionHistory>(cacheKey);
-  
-  if (cached) {
-    return cached;
-  }
-
-  const data = await fetchWithRetry<TransactionHistory>(
-    `/transactions/history?page=${page}&limit=${limit}`
-  );
-  setCachedData(cacheKey, data);
-  return data;
+export async function getTransactionHistory(params: { page: number; limit: number }): Promise<TransactionHistory> {
+  // TODO: Replace with actual API call
+  return {
+    transactions: [
+      {
+        id: "1",
+        type: "STAKE",
+        status: "COMPLETED",
+        amount: "100 SUI",
+        timestamp: "2024-01-01T00:00:00Z",
+        transactionHash: "0x123...abc",
+        validatorAddress: "0x456...def",
+      },
+    ],
+    total: 1,
+    page: params.page,
+    limit: params.limit,
+  };
 }
 
 // Cache invalidation

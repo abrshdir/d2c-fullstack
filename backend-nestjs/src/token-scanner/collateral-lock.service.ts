@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 const COLLATERAL_LOCK_CONTRACT_ADDRESS =
   '0xDCc2662a9301eCD933dE3274407C7CEFd562fA09';
 
-// Define the contract interface
+// Define the contract interface-
 interface ICollateralLockContract extends ethers.BaseContract {
   lockCollateral(
     user: string,

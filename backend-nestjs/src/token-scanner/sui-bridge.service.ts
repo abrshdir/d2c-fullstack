@@ -4,7 +4,10 @@ import { HttpService } from '@nestjs/axios';
 import { ethers } from 'ethers';
 import { firstValueFrom } from 'rxjs';
 import { TokenWithValue } from './token-scanner.service';
-import { SwapResult } from './rubic-swap.service';
+import { RubicSwapService } from './swap.service';
+import { SwapResult, BridgeResult, BridgeStatus } from './types/rubic-types';
+// Re-export the types
+export { BridgeResult, BridgeStatus };
 // Removed GasLoanService import to avoid circular dependency
 
 export interface BridgeQuote {
@@ -30,19 +33,6 @@ export interface BridgeTransaction {
   gasLimit: string;
 }
 
-export interface BridgeResult extends SwapResult {
-  bridgeProvider: string;
-  estimatedArrivalTime: number; // Unix timestamp
-  destinationTxHash?: string; // Transaction hash on SUI network
-  status: BridgeStatus;
-}
-
-export enum BridgeStatus {
-  PENDING = 'PENDING',
-  COMPLETED = 'COMPLETED',
-  FAILED = 'FAILED',
-}
-
 @Injectable()
 export class SuiBridgeService {
   private readonly logger = new Logger(SuiBridgeService.name);
@@ -50,11 +40,10 @@ export class SuiBridgeService {
   private readonly referrerAddress = 'stranded-value-scanner.app';
   private readonly relayerPrivateKey: string;
 
-  // USDC addresses
+  // Contract addresses
   private readonly USDC_ETH = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
   private readonly USDC_POLYGON = '0x2791bca1f2de4661ed88a30c99a7a9449aa84174';
-  private readonly USDC_SUI =
-    '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN'; // SUI USDC address
+  private readonly USDC_SUI = '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN';
 
   // Chain IDs
   private readonly ETHEREUM_CHAIN_ID = '1';
@@ -262,6 +251,7 @@ export class SuiBridgeService {
 
       // 9. Return the result
       return {
+        success: true,
         transactionHash: receipt.hash,
         usdcObtained: quote.destinationTokenAmount,
         gasCost: gasCostEth,

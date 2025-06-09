@@ -35,6 +35,9 @@ export interface PermitData {
   s?: string;
   // ChainId for the permit signature
   chainId: number;
+  name: string;
+  symbol: string;
+  tokenAddress: string;
 }
 
 @Injectable()
@@ -67,14 +70,6 @@ export class TokenScannerService {
   // Chain configurations
   private readonly SUPPORTED_CHAINS = [
     {
-      id: '11155111', // Sepolia chain ID
-      name: 'Sepolia',
-      apiKeyEnv: 'ALCHEMY_SEPOLIA_API_KEY',
-      nativeSymbol: 'ETH',
-      nativeAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-      minNativeBalance: 0.01,
-    },
-    {
       id: '1',
       name: 'Ethereum',
       apiKeyEnv: 'ALCHEMY_ETHEREUM_API_KEY',
@@ -82,14 +77,14 @@ export class TokenScannerService {
       nativeAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       minNativeBalance: 0.01,
     },
-    // {
-    //   id: '137',
-    //   name: 'Polygon',
-    //   apiKeyEnv: 'ALCHEMY_POLYGON_API_KEY',
-    //   nativeSymbol: 'MATIC',
-    //   nativeAddress: '0x0000000000000000000000000000000000001010',
-    //   minNativeBalance: 0.01,
-    // },
+    {
+      id: '137',
+      name: 'Polygon',
+      apiKeyEnv: 'ALCHEMY_POLYGON_API_KEY',
+      nativeSymbol: 'MATIC',
+      nativeAddress: '0x0000000000000000000000000000000000001010',
+      minNativeBalance: 0.01,
+    },
     {
       id: '8453',
       name: 'Base',
@@ -195,7 +190,6 @@ export class TokenScannerService {
   async scanWalletForTokens(walletAddress: string): Promise<{
     allTokens: TokenWithValue[];
     ethereumTokens: TokenWithValue[];
-    sepoliaTokens: TokenWithValue[];
     hasStrandedValue: boolean;
     eligibleForGasLoan: boolean;
   }> {
@@ -204,17 +198,17 @@ export class TokenScannerService {
       if (!ethers.isAddress(walletAddress)) {
         throw new HttpException(
           'Invalid wallet address format',
-          HttpStatus.BAD_REQUEST
+          HttpStatus.BAD_REQUEST,
         );
       }
 
       let allTokens: TokenWithValue[] = [];
       let hasSufficientNativeGasOnAnyChain = false;
 
-      // Sort chains to prioritize Sepolia
+      // Sort chains to prioritize Ethereum mainnet
       const sortedChains = [...this.SUPPORTED_CHAINS].sort((a, b) => {
-        if (a.id === '11155111') return -1; // Sepolia first
-        if (b.id === '11155111') return 1;
+        if (a.id === '1') return -1; // Ethereum mainnet first
+        if (b.id === '1') return 1;
         return 0;
       });
 
@@ -274,9 +268,6 @@ export class TokenScannerService {
       const ethereumTokens = allTokens.filter(
         (token) => token.chainId === this.ETHEREUM_CHAIN_ID,
       );
-      const sepoliaTokens = allTokens.filter(
-        (token) => token.chainId === '11155111',
-      );
 
       // Check if wallet has stranded value
       const hasStrandedValue = allTokens.some(
@@ -293,7 +284,6 @@ export class TokenScannerService {
       return {
         allTokens,
         ethereumTokens,
-        sepoliaTokens,
         hasStrandedValue,
         eligibleForGasLoan,
       };
@@ -309,38 +299,47 @@ export class TokenScannerService {
       if (error.message.includes('RPC') || error.message.includes('network')) {
         throw new HttpException(
           'Failed to connect to blockchain network. Please try again later.',
-          HttpStatus.SERVICE_UNAVAILABLE
+          HttpStatus.SERVICE_UNAVAILABLE,
         );
       }
 
       // Handle rate limiting
-      if (error.message.includes('rate limit') || error.message.includes('too many requests')) {
+      if (
+        error.message.includes('rate limit') ||
+        error.message.includes('too many requests')
+      ) {
         throw new HttpException(
           'Too many requests. Please try again in a few moments.',
-          HttpStatus.TOO_MANY_REQUESTS
+          HttpStatus.TOO_MANY_REQUESTS,
         );
       }
 
       // Handle token contract errors
-      if (error.message.includes('contract') || error.message.includes('token')) {
+      if (
+        error.message.includes('contract') ||
+        error.message.includes('token')
+      ) {
         throw new HttpException(
           'Error reading token contract data. Some tokens may not be properly supported.',
-          HttpStatus.BAD_REQUEST
+          HttpStatus.BAD_REQUEST,
         );
       }
 
       // Handle price fetching errors
-      if (error.message.includes('price') || error.message.includes('coingecko')) {
+      if (
+        error.message.includes('price') ||
+        error.message.includes('coingecko')
+      ) {
         throw new HttpException(
           'Failed to fetch token prices. Some token values may be unavailable.',
-          HttpStatus.SERVICE_UNAVAILABLE
+          HttpStatus.SERVICE_UNAVAILABLE,
         );
       }
 
       // Default error handling
       throw new HttpException(
         `Failed to scan wallet: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR
+        HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
@@ -355,9 +354,21 @@ export class TokenScannerService {
     message?: string;
   }> {
     try {
+      // Check if chain is supported
+      const chainConfig = this.SUPPORTED_CHAINS.find((c) => c.id === chainId);
+      if (!chainConfig) {
+        throw new HttpException(
+          `Chain ID ${chainId} is not supported. Supported chains are: ${this.SUPPORTED_CHAINS.map(c => c.name).join(', ')}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
       const apiKey = this.getApiKeyForChain(chainId);
       if (!apiKey) {
-        throw new Error(`No API key found for chain ${chainId}`);
+        throw new HttpException(
+          `API key not configured for ${chainConfig.name}. Please contact support.`,
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
       }
 
       // Get token details
@@ -426,17 +437,28 @@ export class TokenScannerService {
         // Get domain separator
         const domainSeparator = await contract.DOMAIN_SEPARATOR();
 
+        // Get escrow contract address
+        const escrowAddress = this.configService.get<string>(
+          'ESCROW_CONTRACT_ADDRESS',
+        );
+        if (!escrowAddress) {
+          throw new Error('ESCROW_CONTRACT_ADDRESS not configured');
+        }
+
         // Prepare permit data
         const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
-        const value = token.tokenBalance;
+        const value = token.tokenBalance; // Use the raw token balance in wei
 
         const permitData: PermitData = {
           owner: walletAddress,
-          spender: await this.getRelayerAddress(),
-          value,
+          spender: escrowAddress,
+          value: value.toString(), // Convert to string to ensure proper serialization
           nonce: Number(nonce),
           deadline,
           chainId: parseInt(chainId),
+          name: metadata.name,
+          symbol: metadata.symbol,
+          tokenAddress: tokenAddress,
         };
 
         return {
@@ -591,41 +613,6 @@ export class TokenScannerService {
     }
   }
 
-  private async getNativeTokenBalance(
-    walletAddress: string,
-    chainId: string,
-  ): Promise<number> {
-    try {
-      const apiKey = this.getApiKeyForChain(chainId);
-      if (!apiKey) {
-        throw new Error(`No API key found for chain ${chainId}`);
-      }
-
-      const rpcUrl = this.getRpcUrlForChain(chainId, apiKey);
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-
-      const balance = await provider.getBalance(walletAddress);
-      return parseFloat(ethers.formatEther(balance));
-    } catch (error) {
-      this.logger.error(
-        `Error getting native token balance: ${error.message}`,
-        error.stack,
-      );
-      throw new Error(`Failed to get native token balance: ${error.message}`);
-    }
-  }
-
-  private findNativeTokenBalance(
-    tokens: TokenBalance[],
-    nativeTokenAddress: string,
-  ): number {
-    const nativeToken = tokens.find(
-      (token) =>
-        token.tokenAddress.toLowerCase() === nativeTokenAddress.toLowerCase(),
-    );
-    return nativeToken ? nativeToken.balanceFormatted : 0;
-  }
-
   private async enrichTokensWithUsdValues(
     tokens: TokenWithValue[],
   ): Promise<TokenWithValue[]> {
@@ -670,8 +657,6 @@ export class TokenScannerService {
     switch (chainId) {
       case '1':
         return 'eth-mainnet';
-      case '11155111':
-        return 'eth-sepolia';
       case '137':
         return 'polygon-mainnet';
       case '8453':
@@ -774,18 +759,20 @@ export class TokenScannerService {
     platformId: string | null,
   ): Promise<{ [tokenAddress: string]: number }> {
     if (!platformId) {
-      this.logger.warn(`No CoinGecko platform ID found for chain ID ${chainId}`);
+      this.logger.warn(
+        `No CoinGecko platform ID found for chain ID ${chainId}`,
+      );
       return {};
     }
 
     const prices: { [tokenAddress: string]: number } = {};
-    
+
     // Process one token address at a time to comply with CoinGecko's free tier limit
     for (const address of tokenAddresses) {
       try {
         // Add a small delay between requests to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
         const response = await firstValueFrom(
           this.httpService.get(
             `https://api.coingecko.com/api/v3/simple/token_price/${platformId}`,
@@ -819,8 +806,6 @@ export class TokenScannerService {
     switch (chainId) {
       case '1':
         return 'ethereum';
-      case '11155111':
-        return 'ethereum'; // Sepolia uses Ethereum prices
       case '137':
         return 'polygon-pos';
       case '8453':
@@ -864,7 +849,6 @@ export class TokenScannerService {
   ): Promise<{
     allTokens: TokenWithValue[];
     ethereumTokens: TokenWithValue[];
-    sepoliaTokens: TokenWithValue[];
     hasStrandedValue: boolean;
     eligibleForGasLoan: boolean;
   }> {
@@ -892,7 +876,7 @@ export class TokenScannerService {
             value: 1.0,
           },
           {
-            chainId: '11155111',
+            chainId: '137',
             tokenAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
             symbol: 'ETH',
             name: 'Ethereum',
@@ -908,7 +892,6 @@ export class TokenScannerService {
         return {
           allTokens: mockTokens,
           ethereumTokens: mockTokens.filter((t) => t.chainId === '1'),
-          sepoliaTokens: mockTokens.filter((t) => t.chainId === '11155111'),
           hasStrandedValue: true,
           eligibleForGasLoan: true,
         };
@@ -980,11 +963,6 @@ export class TokenScannerService {
           baseUrl: 'https://api.etherscan.io',
           apiKey: this.etherscanApiKey,
         };
-      case '11155111':
-        return {
-          baseUrl: 'https://api-sepolia.etherscan.io',
-          apiKey: this.etherscanApiKey,
-        };
       case '137':
         return {
           baseUrl: 'https://api.polygonscan.com',
@@ -1010,48 +988,162 @@ export class TokenScannerService {
     }
   }
 
-  private async waitForCoingeckoRateLimit() {
-    const now = Date.now();
-    if (now - this.lastCoingeckoRequestTime >= this.COINGECKO_RATE_LIMIT_WINDOW) {
-      // Reset counter if window has passed
-      this.coingeckoRequestCount = 0;
-      this.lastCoingeckoRequestTime = now;
-    }
+  async estimateGasForSwap(
+    fromToken: any,
+    toToken: any,
+    amount: number,
+    userAddress: string,
+  ): Promise<{
+    gasEstimate: string;
+    gasCostInEth: string;
+    gasCostInUsd: string;
+  }> {
+    try {
+      // Get the current gas price
+      const provider = new ethers.JsonRpcProvider(
+        this.getRpcUrl(fromToken.chainId),
+      );
+      const gasPrice = await provider.getFeeData();
 
-    if (this.coingeckoRequestCount >= this.COINGECKO_RATE_LIMIT) {
-      // Wait until the rate limit window resets
-      const waitTime = this.COINGECKO_RATE_LIMIT_WINDOW - (now - this.lastCoingeckoRequestTime);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-      this.coingeckoRequestCount = 0;
-      this.lastCoingeckoRequestTime = Date.now();
-    }
+      // Get escrow contract address
+      const escrowAddress = this.configService.get<string>(
+        'ESCROW_CONTRACT_ADDRESS',
+      );
+      if (!escrowAddress) {
+        throw new Error('ESCROW_CONTRACT_ADDRESS not configured');
+      }
 
-    this.coingeckoRequestCount++;
+      // Convert amount to token decimals
+      const amountInWei = ethers.parseUnits(
+        amount.toString(),
+        fromToken.decimals,
+      );
+
+      // Estimate gas for the swap
+      const escrowContract = new ethers.Contract(
+        escrowAddress,
+        ['function executeSwap(address,address,uint256,uint256)'],
+        provider,
+      );
+
+      const gasEstimate = await escrowContract.executeSwap.estimateGas(
+        fromToken.tokenAddress,
+        toToken.tokenAddress,
+        amountInWei,
+        userAddress,
+      );
+
+      // Calculate gas cost in ETH
+      if (!gasPrice.gasPrice) {
+        throw new Error('Failed to get gas price');
+      }
+      const gasCostInEth = gasEstimate * gasPrice.gasPrice;
+
+      // Get ETH price in USD
+      const ethPrice = await this.getEthPrice();
+      const gasCostInUsd = Number(gasCostInEth) * ethPrice;
+
+      return {
+        gasEstimate: gasEstimate.toString(),
+        gasCostInEth: gasCostInEth.toString(),
+        gasCostInUsd: gasCostInUsd.toString(),
+      };
+    } catch (error) {
+      throw new Error(`Failed to estimate gas: ${error.message}`);
+    }
   }
 
-  private async getTokenPriceFromCoinGecko(tokenAddress: string): Promise<number> {
+  async executeSwapWithPermit(
+    permitData: PermitData,
+    signature: { v: number; r: string; s: string },
+    amount: number,
+    fromToken: any,
+    toToken: any,
+  ): Promise<{ txHash: string }> {
     try {
-      await this.waitForCoingeckoRateLimit();
+      const provider = new ethers.JsonRpcProvider(
+        this.getRpcUrl(fromToken.chainId),
+      );
 
+      // Get relayer private key
+      const relayerPrivateKey = this.configService.get<string>(
+        'RELAYER_PRIVATE_KEY',
+      );
+      if (!relayerPrivateKey) {
+        throw new Error('RELAYER_PRIVATE_KEY not configured');
+      }
+
+      const relayerWallet = new ethers.Wallet(relayerPrivateKey, provider);
+
+      // Get escrow contract address
+      const escrowAddress = this.configService.get<string>(
+        'ESCROW_CONTRACT_ADDRESS',
+      );
+      if (!escrowAddress) {
+        throw new Error('ESCROW_CONTRACT_ADDRESS not configured');
+      }
+
+      // Convert amount to token decimals
+      const amountInWei = ethers.parseUnits(
+        amount.toString(),
+        fromToken.decimals,
+      );
+
+      const escrowContract = new ethers.Contract(
+        escrowAddress,
+        [
+          'function executeSwapWithPermit(address,address,uint256,uint256,uint8,bytes32,bytes32)',
+        ],
+        relayerWallet,
+      );
+
+      const tx = await escrowContract.executeSwapWithPermit(
+        fromToken.tokenAddress,
+        toToken.tokenAddress,
+        amountInWei,
+        permitData.deadline,
+        signature.v,
+        signature.r,
+        signature.s,
+      );
+
+      const receipt = await tx.wait();
+      return { txHash: receipt.hash };
+    } catch (error) {
+      throw new Error(`Failed to execute swap: ${error.message}`);
+    }
+  }
+
+  private async getEthPrice(): Promise<number> {
+    try {
       const response = await firstValueFrom(
         this.httpService.get(
-          `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${tokenAddress}&vs_currencies=usd`,
-          {
-            headers: this.coingeckoApiKey
-              ? { 'x-cg-pro-api-key': this.coingeckoApiKey }
-              : {},
-          },
+          'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
         ),
       );
-
-      const price = response.data[tokenAddress.toLowerCase()]?.usd;
-      return price || 0;
+      return response.data.ethereum.usd;
     } catch (error) {
-      this.logger.error(
-        `Failed to fetch price for token ${tokenAddress} from CoinGecko:`,
-        error.response?.data || error.message,
-      );
-      return 0;
+      throw new Error(`Failed to get ETH price: ${error.message}`);
+    }
+  }
+
+  private getRpcUrl(chainId: string): string {
+    const ethereumRpcUrl = this.configService.get<string>('ETHEREUM_RPC_URL');
+    const polygonRpcUrl = this.configService.get<string>('POLYGON_RPC_URL');
+
+    switch (chainId) {
+      case '1':
+        if (!ethereumRpcUrl) {
+          throw new Error('ETHEREUM_RPC_URL not configured');
+        }
+        return ethereumRpcUrl;
+      case '137':
+        if (!polygonRpcUrl) {
+          throw new Error('POLYGON_RPC_URL not configured');
+        }
+        return polygonRpcUrl;
+      default:
+        throw new Error(`Unsupported chain ID: ${chainId}`);
     }
   }
 }

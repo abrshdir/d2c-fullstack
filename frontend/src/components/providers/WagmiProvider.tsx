@@ -1,7 +1,7 @@
 'use client';
 
 import { createConfig } from "wagmi";
-import { sepolia } from "wagmi/chains";
+import { mainnet, polygon } from "wagmi/chains";
 import { createPublicClient, http } from "viem";
 import { injected } from "wagmi/connectors";
 import { ReactNode } from "react";
@@ -9,10 +9,11 @@ import { WagmiProvider as WagmiProviderComponent } from 'wagmi';
 
 // Configure Wagmi
 const config = createConfig({
-  chains: [sepolia],
+  chains: [mainnet, polygon],
   connectors: [injected()],
   transports: {
-    [sepolia.id]: http(),
+    [mainnet.id]: http(),
+    [polygon.id]: http(),
   },
 });
 

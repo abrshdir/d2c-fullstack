@@ -1,58 +1,301 @@
-# Gas-Sponsored Token Swap Service
+# Stranded Value Scanner API Documentation (Improved Version)
 
-## Overview
+This document provides a comprehensive list of API endpoints for the Stranded Value Scanner application, incorporating Protoclink SDK for secure swaps and Wormhole bridge integration for cross-chain functionality.
 
-This service identifies valuable tokens in user wallets and offers to swap them to USDC using Rubic's SDK. The service is designed to help users with "stranded value" - tokens that are valuable but can't be moved due to lack of gas funds.
+## Base URL
 
-## Key Components
+All API endpoints are relative to the base URL of your deployed application.
 
-### 1. Token Scanner Service
+## Key Improvements
 
-- Scans wallets for tokens and identifies if they have stranded value
-- Returns top tokens by value and indicates if gas-sponsored swaps are available
+1. **Protoclink Integration**: Replaced Rubic SDK with Protoclink's secure swap contract (0xDec80E988F4baF43be69c13711453013c212feA8)
+2. **Enhanced Security**: Added token locking before swap execution to prevent reentrancy
+3. **Wormhole Bridge**: Updated bridge endpoints to use Wormhole's official contract (0x98f3c9e6E3fAce36bAAd05FE09d375Ef1464288B)
+4. **Signature Verification**: Added endpoints for Protoclink signature generation and verification
 
-### 2. Rubic Swap Service
+## Token Scanner Endpoints
 
-- Integrates with Rubic's API to find the best swap paths across multiple DEXs
-- Gets quotes for token swaps to USDC
-- Executes gas-sponsored transactions using a relayer wallet
+### Scan Wallet for Tokens
 
-### 3. Swap Transaction Service
+```
+GET /token-scanner/scan/:walletAddress
+```
 
-- Tracks all executed swaps
-- Records USDC obtained and gas costs for loan repayment tracking
-- Provides endpoints to view outstanding debt and mark transactions as paid
+Scans a wallet address for tokens on Ethereum and Polygon networks.
 
-## API Endpoints
+**Parameters:**
+- `walletAddress` (path): The Ethereum wallet address to scan
 
-### Token Scanner
+**Response:**
+```json
+{
+  "topTokens": [
+    {
+      "chainId": "1",
+      "tokenAddress": "0x...",
+      "symbol": "TOKEN",
+      "name": "Token Name",
+      "decimals": 18,
+      "balance": "0x...",
+      "balanceFormatted": 10.5,
+      "usdValue": 25.75,
+      "canSwap": true
+    }
+  ],
+  "hasStrandedValue": true
+}
+```
 
-- `GET /token-scanner/scan?walletAddress={address}` - Scan a wallet for tokens and check for stranded value
+## Protoclink Swap Endpoints
 
-### Rubic Swap
+### Generate Swap Signature
 
-- `POST /token-scanner/swap/quote` - Get a quote for swapping a token to USDC
-- `POST /token-scanner/swap/execute` - Execute a gas-sponsored swap
-- `GET /token-scanner/swap/transactions/{walletAddress}` - Get all swap transactions for a wallet
-- `GET /token-scanner/swap/debt/{walletAddress}` - Get outstanding debt for a wallet
-- `POST /token-scanner/swap/mark-paid/{transactionId}` - Mark a transaction as paid
+```
+POST /token-scanner/protoclink/generate-signature
+```
+
+Generates a swap signature for Protoclink's locked contract.
+
+**Request Body:**
+```json
+{
+  "token": {
+    "chainId": "1",
+    "tokenAddress": "0x...",
+    "symbol": "TOKEN",
+    "balanceFormatted": 10.5
+  },
+  "walletAddress": "0x..."
+}
+```
+
+**Response:**
+```json
+{
+  "signature": "0x...",
+  "expiry": 1678901234,
+  "nonce": 12345
+}
+```
+
+### Get Swap Quote
+
+```
+POST /token-scanner/swap/quote
+```
+
+Gets a quote using Protoclink's routing.
+
+**Request Body:**
+```json
+{
+  "token": {
+    "chainId": "1",
+    "tokenAddress": "0x...",
+    "symbol": "TOKEN"
+  },
+  "walletAddress": "0x..."
+}
+```
+
+**Response:**
+```json
+{
+  "id": "quote-id",
+  "srcTokenAddress": "0x...",
+  "srcTokenAmount": "10.5",
+  "dstTokenAmount": "25.75",
+  "priceImpact": 0.5,
+  "estimatedGasFee": "0.005",
+  "protoclinkContract": "0xDec80E988F4baF43be69c13711453013c212feA8"
+}
+```
+
+### Execute Locked Swap
+
+```
+POST /token-scanner/swap/execute
+```
+
+Executes a swap through Protoclink's locked contract.
+
+**Request Body:**
+```json
+{
+  "token": {
+    "chainId": "1",
+    "tokenAddress": "0x...",
+    "symbol": "TOKEN"
+  },
+  "walletAddress": "0x...",
+  "signature": "0x..."
+}
+```
+
+**Response:**
+```json
+{
+  "transactionHash": "0x...",
+  "usdcObtained": "25.75",
+  "gasCost": "0.005",
+  "status": "PENDING",
+  "lockedUntil": 1678901234
+}
+```
+
+## Wormhole Bridge Endpoints
+
+### Get Bridge Quote
+
+```
+POST /token-scanner/bridge/quote
+```
+
+Gets a quote for bridging through Wormhole.
+
+**Request Body:**
+```json
+{
+  "token": {
+    "chainId": "1",
+    "tokenAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "symbol": "USDC",
+    "balanceFormatted": 100.0
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "srcTokenAmount": "100.0",
+  "dstTokenAmount": "99.5",
+  "bridgeFee": "0.5",
+  "wormholeContract": "0x98f3c9e6E3fAce36bAAd05FE09d375Ef1464288B",
+  "estimatedTime": "30"
+}
+```
+
+### Execute Bridge Transfer
+
+```
+POST /token-scanner/bridge/execute
+```
+
+Executes a bridge transfer through Wormhole.
+
+**Request Body:**
+```json
+{
+  "token": {
+    "chainId": "1",
+    "tokenAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "symbol": "USDC",
+    "balanceFormatted": 100.0
+  },
+  "walletAddress": "0x...",
+  "destinationAddress": "0x.sui"
+}
+```
+
+**Response:**
+```json
+{
+  "transactionHash": "0x...",
+  "bridgeSequence": "12345",
+  "status": "PENDING",
+  "estimatedArrival": 1678901234
+}
+```
+
+## Repayment Endpoints
+
+### Process Repayment
+
+```
+POST /token-scanner/repayment/process
+```
+
+Processes a repayment from bridged funds.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "0x...",
+  "bridgedAmount": "10.5",
+  "repaymentSignature": "0x..."
+}
+```
+
+**Response:**
+```json
+{
+  "amountRepaid": "2.5",
+  "remainingBalance": "8.0",
+  "status": "CONFIRMED"
+}
+```
+
+## Monitoring Endpoints
+
+### Verify Contract State
+
+```
+GET /token-scanner/verify/:transactionHash
+```
+
+Verifies on-chain contract state.
+
+**Response:**
+```json
+{
+  "fundsLocked": true,
+  "swapVerified": true,
+  "bridgeInitiated": true
+}
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+```json
+{
+  "statusCode": 400,
+  "message": "Invalid signature",
+  "error": "Bad Request"
+}
+```
+
+### 500 Internal Server Error
+
+```json
+{
+  "statusCode": 500,
+  "message": "Swap verification failed",
+  "error": "Internal Server Error"
+}
+```
 
 ## Configuration
 
-The following environment variables are required:
+Required environment variables:
 
 ```
-RELAYER_PRIVATE_KEY=your_relayer_wallet_private_key
-ETHEREUM_RPC_URL=your_ethereum_rpc_url
-POLYGON_RPC_URL=your_polygon_rpc_url
+PROTOCLINK_CONTRACT=0xDec80E988F4baF43be69c13711453013c212feA8
+WORMHOLE_BRIDGE=0x98f3c9e6E3fAce36bAAd05FE09d375Ef1464288B
+RELAYER_PRIVATE_KEY=your_relayer_key
 ```
 
-## Implementation Details
+## Implementation Notes
 
-1. **Permit-Based Approvals**: The service uses permit-based token approvals where available to save on upfront gas costs.
+1. All swaps are executed through Protoclink's locked contract to prevent reentrancy
+2. Wormhole bridge is used for all cross-chain transfers
+3. Signatures are verified on-chain before any funds are moved
+4. Contract state is continuously monitored for security
 
-2. **Gas Sponsorship**: The relayer wallet pays for the gas costs of the swap transaction, which are tracked for later repayment.
+## Sequence Diagram
 
-3. **Multi-DEX Routing**: Rubic's quoteBest API is used to find optimal swap paths across multiple DEXs.
+![Token Scanner Flow Diagram](diagram.svg)
 
-4. **Debt Tracking**: The service tracks the amount of USDC obtained and the gas cost for each transaction, allowing for loan repayment tracking.
+This improved API documentation reflects the enhanced security and functionality of the system while maintaining all the original capabilities.

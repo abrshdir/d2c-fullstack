@@ -1,10 +1,13 @@
-
 "use client";
 
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { ListChecks } from "lucide-react";
+import { ListChecks, Loader2, ExternalLink } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/use-toast";
 
 // This component is a placeholder to display transaction history.
 // It will display data fetched using the /transactions/history endpoint.
@@ -24,62 +27,209 @@ const mockActivities = [
 // Define the type for activity data based on the TransactionHistory schema in openapi.yaml
 // This is a placeholder and should be replaced with the actual type from the API client
 interface Activity {
-  id: string; // Using string as per openapi.yaml
-  type: "DEPOSIT" | "SWAP" | "BRIDGE" | "STAKE" | "WITHDRAW"; // Using enum as per openapi.yaml
-  status: "PENDING" | "COMPLETED" | "FAILED"; // Using enum as per openapi.yaml
-  amount: string; // Using string as per openapi.yaml
-  timestamp: string; // Using string as per openapi.yaml
-  transactionHash?: string; // Using string as per openapi.yaml, optional
-  // Add other relevant fields from the transaction history data
-  details?: any; // Placeholder for additional details specific to the transaction type
+  id: string;
+  type: "DEPOSIT" | "SWAP" | "BRIDGE" | "STAKE" | "WITHDRAW" | "REWARD" | "GAS_LOAN";
+  status: "PENDING" | "COMPLETED" | "FAILED";
+  amount: string;
+  timestamp: string;
+  transactionHash?: string;
+  fromChain?: string;
+  toChain?: string;
+  fromToken?: string;
+  toToken?: string;
+  validatorAddress?: string;
+  error?: string;
 }
 
 interface ActivityLogProps {
-  activities: Activity[];
+  activities?: Activity[];
+  isLoading?: boolean;
+  error?: string;
+  onRefresh?: () => void;
 }
 
-export function ActivityLog({ activities }: ActivityLogProps) {
+export function ActivityLog({ activities = [], isLoading = false, error, onRefresh }: ActivityLogProps) {
+  const { toast } = useToast();
+  const [expandedActivity, setExpandedActivity] = useState<string | null>(null);
+
+  const getActivityIcon = (type: Activity['type']) => {
+    switch (type) {
+      case 'DEPOSIT':
+        return '💰';
+      case 'SWAP':
+        return '🔄';
+      case 'BRIDGE':
+        return '🌉';
+      case 'STAKE':
+        return '🔒';
+      case 'WITHDRAW':
+        return '💸';
+      case 'REWARD':
+        return '🎁';
+      case 'GAS_LOAN':
+        return '⛽';
+      default:
+        return '📝';
+    }
+  };
+
+  const getStatusColor = (status: Activity['status']) => {
+    switch (status) {
+      case 'COMPLETED':
+        return 'bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100';
+      case 'FAILED':
+        return 'bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100';
+      case 'PENDING':
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100';
+      default:
+        return '';
+    }
+  };
+
+  const getExplorerLink = (hash: string, chain: string) => {
+    switch (chain?.toLowerCase()) {
+      case 'ethereum':
+        return `https://etherscan.io/tx/${hash}`;
+      case 'sui':
+        return `https://suiexplorer.com/txblock/${hash}`;
+      default:
+        return null;
+    }
+  };
+
+  const handleCopyHash = (hash: string) => {
+    navigator.clipboard.writeText(hash);
+    toast({
+      title: "Copied!",
+      description: "Transaction hash copied to clipboard",
+    });
+  };
+
   return (
     <Card className="col-span-1 lg:col-span-3">
-      <CardHeader>
-        <CardTitle className="flex items-center">
-          <ListChecks className="mr-2 h-6 w-6" />
-          Recent Activity
-        </CardTitle>
-        <CardDescription>An overview of recent platform activities and transactions.</CardDescription>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <div>
+          <CardTitle className="flex items-center">
+            <ListChecks className="mr-2 h-6 w-6" />
+            Recent Activity
+          </CardTitle>
+          <CardDescription>An overview of recent platform activities and transactions.</CardDescription>
+        </div>
+        {onRefresh && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRefresh}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              "Refresh"
+            )}
+          </Button>
+        )}
       </CardHeader>
       <CardContent>
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
         <ScrollArea className="h-[350px]">
-          {/* Replace mockActivities with the actual activities prop */}
-          <div className="space-y-6">
-            {activities.map((activity) => (
-              <div key={activity.id} className="flex items-start space-x-4 p-3 rounded-lg hover:bg-muted/50 transition-colors">
-                <div className="flex-shrink-0">
-                  {/* Adjust color based on status */}
-                  <div className={`w-3 h-3 rounded-full mt-1.5 ${activity.status === "COMPLETED" ? "bg-green-500" : activity.status === "FAILED" ? "bg-red-500" : "bg-yellow-500"}`}></div>
-                </div>
-                <div className="flex-1 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium leading-none">
-                      {/* Display activity type and potentially other key info */}
-                      {activity.type}
-                    </p>
-                    {/* Format timestamp as needed */}
-                    <p className="text-xs text-muted-foreground">{activity.timestamp}</p>
+          {isLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+          ) : activities.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              No activities found
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {activities.map((activity) => (
+                <div
+                  key={activity.id}
+                  className="flex items-start space-x-4 p-4 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                  onClick={() => setExpandedActivity(expandedActivity === activity.id ? null : activity.id)}
+                >
+                  <div className="flex-shrink-0 text-2xl">
+                    {getActivityIcon(activity.type)}
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    {/* Display relevant transaction details */}
-                    Amount: {activity.amount} | Transaction Hash: {activity.transactionHash || 'N/A'}
-                    {/* Add other details based on activity type */}
-                  </p>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium leading-none">
+                        {activity.type}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(activity.timestamp).toLocaleString()}
+                      </p>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Amount: {activity.amount}
+                      {activity.fromToken && activity.toToken && (
+                        <span> | {activity.fromToken} → {activity.toToken}</span>
+                      )}
+                    </p>
+                    {expandedActivity === activity.id && (
+                      <div className="mt-2 space-y-2 text-sm">
+                        {activity.fromChain && activity.toChain && (
+                          <p>Bridge: {activity.fromChain} → {activity.toChain}</p>
+                        )}
+                        {activity.validatorAddress && (
+                          <p>Validator: {activity.validatorAddress}</p>
+                        )}
+                        {activity.transactionHash && (
+                          <div className="flex items-center space-x-2">
+                            <p>Transaction:</p>
+                            <code className="text-xs bg-muted px-2 py-1 rounded">
+                              {activity.transactionHash.slice(0, 8)}...{activity.transactionHash.slice(-6)}
+                            </code>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCopyHash(activity.transactionHash!);
+                              }}
+                            >
+                              Copy
+                            </Button>
+                            {getExplorerLink(activity.transactionHash, activity.fromChain || '') && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const link = getExplorerLink(activity.transactionHash!, activity.fromChain || '');
+                                  if (link) {
+                                    window.open(link, '_blank');
+                                  }
+                                }}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                        {activity.error && (
+                          <p className="text-red-500">Error: {activity.error}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <Badge
+                    variant={activity.status === "COMPLETED" ? "default" : activity.status === "FAILED" ? "destructive" : "secondary"}
+                    className={getStatusColor(activity.status)}
+                  >
+                    {activity.status}
+                  </Badge>
                 </div>
-                {/* Adjust badge variant based on status */}
-                <Badge variant={activity.status === "COMPLETED" ? "default" : activity.status === "FAILED" ? "destructive" : "secondary"} className={activity.status === "COMPLETED" ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100" : activity.status === "FAILED" ? "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100" : ""}>
-                  {activity.status}
-                </Badge>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </ScrollArea>
       </CardContent>
     </Card>

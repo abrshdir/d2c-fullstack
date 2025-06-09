@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { GasLoanService } from './gas-loan.service';
-import { RubicSwapService } from './rubic-swap.service';
+import { RubicSwapService } from './swap.service';
 import { CollateralLockService } from './collateral-lock.service';
 import { TokenWithValue } from './token-scanner.service';
 import { ethers } from 'ethers';

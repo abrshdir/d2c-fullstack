@@ -14,6 +14,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
+import { useWallet } from '@suiet/wallet-kit';
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Loader2 } from "lucide-react";
 
 interface Validator {
   address: string;
@@ -25,36 +28,44 @@ interface Validator {
 }
 
 export function StakingForm() {
+  const { connected, address: suiAddress, signAndExecuteTransaction } = useWallet();
   const [amount, setAmount] = useState("");
   const [selectedValidator, setSelectedValidator] = useState<string>("");
   const [validators, setValidators] = useState<Validator[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Mock validators data - replace with actual API call
+  // Fetch validators from SUI network
   useEffect(() => {
-    setValidators([
-      {
-        address: "0x123...abc",
-        name: "Sui Validator 1",
-        apy: 5.2,
-        commission: 2,
-        totalStaked: "1,000,000 SUI",
-        votingPower: 0.8,
-      },
-      {
-        address: "0x456...def",
-        name: "Sui Validator 2",
-        apy: 4.8,
-        commission: 1.5,
-        totalStaked: "800,000 SUI",
-        votingPower: 0.6,
-      },
-    ]);
-  }, []);
+    const fetchValidators = async () => {
+      try {
+        // TODO: Replace with actual SUI validator API call
+        const response = await fetch('/api/sui/validators');
+        const data = await response.json();
+        setValidators(data);
+      } catch (error) {
+        console.error('Failed to fetch validators:', error);
+        setError('Failed to load validators. Please try again later.');
+      }
+    };
+
+    if (connected) {
+      fetchValidators();
+    }
+  }, [connected]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!connected) {
+      toast({
+        title: "Error",
+        description: "Please connect your SUI wallet first",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (!selectedValidator || !amount) {
       toast({
         title: "Error",
@@ -65,14 +76,40 @@ export function StakingForm() {
     }
 
     setIsLoading(true);
+    setError(null);
+
     try {
-      // TODO: Implement actual staking API call
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      toast({
-        title: "Success",
-        description: "Staking operation initiated successfully",
+      // Prepare staking transaction
+      const txb = new TransactionBlock();
+      const [coin] = txb.splitCoins(txb.gas, [txb.pure(parseInt(amount) * 1e9)]); // Convert to MIST
+      txb.moveCall({
+        target: '0x3::sui_system::request_add_stake',
+        arguments: [
+          txb.object('0x5'),
+          coin,
+          txb.pure(selectedValidator)
+        ],
       });
+
+      // Sign and execute transaction
+      const result = await signAndExecuteTransaction({
+        transaction: txb,
+      });
+
+      if (result.effects.status.status === 'success') {
+        toast({
+          title: "Success",
+          description: "Staking operation completed successfully",
+        });
+        // Reset form
+        setAmount("");
+        setSelectedValidator("");
+      } else {
+        throw new Error(result.effects.status.error || 'Transaction failed');
+      }
     } catch (error) {
+      console.error('Staking error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to initiate staking');
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to initiate staking",
@@ -83,6 +120,19 @@ export function StakingForm() {
     }
   };
 
+  if (!connected) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Stake SUI</CardTitle>
+          <CardDescription>
+            Please connect your SUI wallet to start staking
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -92,6 +142,11 @@ export function StakingForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="validator">Select Validator</Label>
@@ -156,7 +211,14 @@ export function StakingForm() {
           </div>
 
           <Button type="submit" disabled={isLoading} className="w-full">
-            {isLoading ? "Processing..." : "Stake SUI"}
+            {isLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              "Stake SUI"
+            )}
           </Button>
         </form>
       </CardContent>

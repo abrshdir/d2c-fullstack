@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SwapResult } from './rubic-swap.service';
+import { SwapResult } from './types/rubic-types';
 
 export interface SwapTransaction {
   id: string;

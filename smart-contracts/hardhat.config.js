@@ -21,12 +21,18 @@ module.exports = {
   networks: {
     hardhat: {
       chainId: 31337,
+      forking: {
+        url: "https://eth-mainnet.g.alchemy.com/v2/-l7QoJNDLhGfuVz4ajwRi",
+        blockNumber: 19000000,
+      },
     },
     localhost: {
       url: "http://127.0.0.1:8545",
+      gas: 2100000,
+      gasPrice: 20000000000,
     },
     sepolia: {
-      url: process.env.SEPOLIA_RPC_URL || "",
+      url: process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/your-api-key",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       gasPrice: 50000000000, // 50 gwei
     },
@@ -42,11 +48,7 @@ module.exports = {
     },
   },
   etherscan: {
-    apiKey: {
-      mainnet: process.env.ETHERSCAN_API_KEY || "",
-      polygon: process.env.POLYGONSCAN_API_KEY || "",
-      sepolia: process.env.ETHERSCAN_API_KEY || "", // Sepolia uses the same API key as mainnet
-    },
+    apiKey: process.env.ETHERSCAN_API_KEY,
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS !== undefined,

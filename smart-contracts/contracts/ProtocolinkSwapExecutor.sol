@@ -6,10 +6,10 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
- * @title SwapExecutor
- * @dev Contract to execute token swaps through any DEX aggregator
+ * @title ProtocolinkSwapExecutor
+ * @dev Contract to execute token swaps through Protocolink DEX aggregator
  */
-contract SwapExecutor is Ownable, ReentrancyGuard {
+contract ProtocolinkSwapExecutor is Ownable, ReentrancyGuard {
     // Events
     event SwapExecuted(
         address indexed user,
@@ -22,7 +22,7 @@ contract SwapExecutor is Ownable, ReentrancyGuard {
     
     event RouterUpdated(address indexed newRouter);
     
-    // Address of the DEX aggregator/router
+    // Address of the Protocolink DEX aggregator/router
     address public router;
     
     constructor() Ownable() {
@@ -31,7 +31,7 @@ contract SwapExecutor is Ownable, ReentrancyGuard {
     
     /**
      * @dev Update router address
-     * @param _newRouter New router address
+     * @param _newRouter New Protocolink router address
      */
     function updateRouter(address _newRouter) external onlyOwner {
         require(_newRouter != address(0), "Invalid router address");
@@ -40,12 +40,12 @@ contract SwapExecutor is Ownable, ReentrancyGuard {
     }
     
     /**
-     * @dev Execute a swap
+     * @dev Execute a swap through Protocolink
      * @param _fromToken Address of the token to swap from
      * @param _toToken Address of the token to swap to
      * @param _amount Amount of fromToken to swap
-     * @param _quoteId Quote ID from the aggregator
-     * @param _swapData Calldata for the swap
+     * @param _quoteId Quote ID from Protocolink
+     * @param _swapData Calldata for the Protocolink swap
      */
     function executeSwap(
         address _fromToken,
@@ -66,7 +66,7 @@ contract SwapExecutor is Ownable, ReentrancyGuard {
         // Approve router to spend tokens
         IERC20(_fromToken).approve(router, _amount);
         
-        // Execute the swap
+        // Execute the swap through Protocolink
         (bool success, ) = router.call(_swapData);
         require(success, "Swap failed");
         

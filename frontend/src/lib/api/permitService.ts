@@ -1,23 +1,13 @@
 import { PermitData } from "./types";
-import { ethers } from "ethers";
+import { parseUnits } from "ethers/lib/utils";
+import * as ethers from "ethers";
 
 const API_BASE_URL = "http://localhost:3001";
 
 export class PermitService {
   // Method to calculate token amount with decimals (e.g., 1.0 ETH = 1 * 10^18 wei)
   static calculateTokenAmount(amount: number, decimals: number): string {
-    try {
-      // Convert to BigInt to handle large numbers properly
-      const amountInSmallestUnit = ethers.parseUnits(
-        amount.toString(), 
-        decimals
-      );
-      return amountInSmallestUnit.toString();
-    } catch (error) {
-      console.error("Error calculating token amount:", error);
-      // Fallback implementation if ethers fails
-      return (amount * Math.pow(10, decimals)).toString();
-    }
+    return ethers.utils.parseUnits(amount.toString(), decimals).toString();
   }
 
   // Mock implementation that returns simulated permit data instead of making an API call
@@ -27,86 +17,130 @@ export class PermitService {
     chainId: string;
   }): Promise<PermitData> {
     try {
-      // Simulate network delay for realistic behavior
-      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('Preparing permit with params:', params);
       
-      // Create mock permit data
-      const mockNonce = Math.floor(Math.random() * 1000); // Random nonce for simulation
-      const mockDeadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+      const response = await fetch(`${API_BASE_URL}/token-scanner/prepare-permit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: params.walletAddress,
+          tokenAddress: params.tokenAddress,
+          chainId: params.chainId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        console.error('API Error Response:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorData
+        });
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('API Response:', data);
       
-      // Return mock permit data
-      return {
+      if (!data) {
+        throw new Error('No data received from API');
+      }
+
+      // Use the Protoclink swap contract address as the spender
+      const spenderAddress = '0xDec80E988F4baF43be69c13711453013c212feA8';
+
+      // Create permit data
+      const permitData: PermitData = {
         owner: params.walletAddress,
-        spender: "0x7fffBC1fc84F816353684EAc12E9a3344FFEAD29", // Our contract address
-        value: "0", // Will be updated with the actual amount when signing
-        nonce: mockNonce,
-        deadline: mockDeadline,
-        chainId: Number(params.chainId),
+        spender: spenderAddress,
+        value: data.value || '0',
+        nonce: data.nonce || 0,
+        deadline: data.deadline || Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
+        chainId: parseInt(params.chainId), // Convert string to number
+        name: data.name || 'Token',
+        symbol: data.symbol || 'TKN',
         tokenAddress: params.tokenAddress,
       };
+
+      return permitData;
     } catch (error) {
-      console.error("Error in preparePermit:", error);
-      throw new Error(
-        `Failed to prepare permit: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      console.error('Error preparing permit:', error);
+      throw error;
     }
   }
 
   static async signPermit(
     permitData: PermitData,
     signer: any
-  ): Promise<{
-    v: number;
-    r: string;
-    s: string;
-  }> {
+  ): Promise<{ v: number; r: string; s: string } | null> {
     try {
-      // EIP-2612 domain
+      if (!permitData || !signer) {
+        throw new Error('Missing permit data or signer');
+      }
+
+      // Extract the actual permit data from the nested structure
+      const actualPermitData = permitData.permitData || permitData;
+
+      // Ensure value is a valid BigNumber
+      if (!actualPermitData.value) {
+        throw new Error('Permit value is required');
+      }
+
+      const value = ethers.BigNumber.from(actualPermitData.value);
+
       const domain = {
-        name: permitData.name || "Token",
-        version: "1",
-        chainId: permitData.chainId,
-        verifyingContract: permitData.tokenAddress || permitData.spender,
+        name: actualPermitData.name || 'Token',
+        version: '1',
+        chainId: actualPermitData.chainId,
+        verifyingContract: actualPermitData.tokenAddress,
       };
 
-      // The types for EIP-2612 Permit
       const types = {
         Permit: [
-          { name: "owner", type: "address" },
-          { name: "spender", type: "address" },
-          { name: "value", type: "uint256" },
-          { name: "nonce", type: "uint256" },
-          { name: "deadline", type: "uint256" },
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
         ],
       };
 
-      // The data to sign
-      const value = {
-        owner: permitData.owner,
-        spender: permitData.spender,
-        value: permitData.value,
-        nonce: permitData.nonce,
-        deadline: permitData.deadline,
+      // Log the values for debugging
+      console.log('Permit Data:', actualPermitData);
+      console.log('Domain:', domain);
+      console.log('Types:', types);
+
+      const values = {
+        owner: actualPermitData.owner,
+        spender: actualPermitData.spender,
+        value: value,
+        nonce: actualPermitData.nonce,
+        deadline: actualPermitData.deadline,
       };
 
-      // Sign the data
-      const signature = await signer.signTypedData(domain, types, value);
+      // Log the values for debugging
+      console.log('Values:', values);
 
-      // Split the signature
-      const r = signature.slice(0, 66);
-      const s = "0x" + signature.slice(66, 130);
-      const v = parseInt(signature.slice(130, 132), 16);
+      // Validate all required fields
+      if (!values.owner || !values.spender || values.nonce === undefined || !values.deadline) {
+        console.error('Missing required permit fields:', {
+          owner: values.owner,
+          spender: values.spender,
+          nonce: values.nonce,
+          deadline: values.deadline
+        });
+        throw new Error('Missing required permit data fields');
+      }
+
+      const signature = await signer._signTypedData(domain, types, values);
+      const { v, r, s } = ethers.utils.splitSignature(signature);
 
       return { v, r, s };
-    } catch (error) {
-      console.error("Error signing permit:", error);
-      throw new Error(
-        `Failed to sign permit: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+    } catch (error: any) {
+      console.error('Error signing permit:', error);
+      throw new Error(`Failed to sign permit: ${error.message}`);
     }
   }
 }

@@ -5,7 +5,7 @@ import { TokenWithValue } from '../types/token.types';
 import { GasLoanRequest } from '../types/gas-loan.types';
 import { SuiStakingRequest } from '../types/sui-staking.types';
 import { GasLoanService } from '../gas-loan.service';
-import { RubicSwapService } from '../rubic-swap.service';
+import { RubicSwapService } from '../swap.service';
 import { CollateralLockService } from '../collateral-lock.service';
 import { SuiStakingService } from '../sui-staking.service';
 import { RewardManagementService } from '../reward-management.service';
